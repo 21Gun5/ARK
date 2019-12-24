@@ -17,10 +17,19 @@ public:
 #endif
 
 protected:
+
+	CMenu m_menu;
+
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV 支持
 
 	DECLARE_MESSAGE_MAP()
 public:
 	virtual BOOL OnInitDialog();
-	//afx_msg void OnBnClickedButton1();
+//	afx_msg void OnBnClickedButton1();
+	CListCtrl m_list;
+	afx_msg void OnKillprocess();
+	afx_msg void OnHideprocess();
+	afx_msg void OnEnumthread();
+	afx_msg void OnEnummodu();
+	afx_msg void OnRclickList1(NMHDR *pNMHDR, LRESULT *pResult);
 };

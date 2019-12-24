@@ -1,11 +1,40 @@
+#include <ntifs.h>
 #include <ntddk.h>
 #include <stdlib.h>
 #include <tchar.h>
+#include <wchar.h>
 
 // 设备\符号链接名
 #define NAME_DEVICE L"\\Device\\deviceARK"
 #define NAME_SYMBOL L"\\DosDevices\\deviceARK"
 
+// 事先声明函数
+NTKERNELAPI CHAR* PsGetProcessImageFileName(PEPROCESS proc);
+NTKERNELAPI struct _PEB* PsGetProcessPeb(PEPROCESS proc);
+
+struct _PEB
+{
+	UCHAR InheritedAddressSpace;                                            //0x0
+	UCHAR ReadImageFileExecOptions;                                         //0x1
+	UCHAR BeingDebugged;
+	UCHAR BitField;
+	void* Mutant;                                                           //0x4
+	void* ImageBaseAddress;                                                 //0x8
+	struct _PEB_LDR_DATA* Ldr;
+};
+//0x30 bytes (sizeof)
+struct _PEB_LDR_DATA
+{
+	ULONG Length;                                                           //0x0
+	UCHAR Initialized;                                                      //0x4
+	VOID* SsHandle;                                                         //0x8
+	struct _LIST_ENTRY InLoadOrderModuleList;                               //0xc
+	struct _LIST_ENTRY InMemoryOrderModuleList;                             //0x14
+	struct _LIST_ENTRY InInitializationOrderModuleList;                     //0x1c
+	VOID* EntryInProgress;                                                  //0x24
+	UCHAR ShutdownInProgress;                                               //0x28
+	VOID* ShutdownThreadId;                                                 //0x2c
+};
 // LDR数据结构体
 typedef struct _LDR_DATA_TABLE_ENTRY {
 	LIST_ENTRY InLoadOrderLinks;    //双向链表
@@ -42,36 +71,53 @@ typedef struct _DRIVERINFO
 	ULONG size;
 	TCHAR name[260];
 }DRIVERINFO, *PDRIVERINFO;
-
+// 进程信息结构体
+typedef struct _PROCESSINFO
+{
+	ULONG PID;
+	TCHAR name[260];
+}PROCESSINFO, *PPROCESSINFO;
+typedef struct _MODULEINFO
+{
+	PVOID base;
+	ULONG size;
+	TCHAR name[260];
+}MODULEINFO, *PMODULEINFO;
 // 自定义控制码
 #define MYCTLCODE(code) CTL_CODE(FILE_DEVICE_UNKNOWN,0x800+(code),METHOD_BUFFERED,FILE_ANY_ACCESS)
 typedef enum _MyCtlCode
 {
 	enumDriver1 = MYCTLCODE(0),
 	enumDriver2 = MYCTLCODE(1),
+	enumProcess1 = MYCTLCODE(2),
+	enumProcess2 = MYCTLCODE(3),
+	enumModule1 = MYCTLCODE(4),
+	enumModule2 = MYCTLCODE(5),
+	enumThread1 = MYCTLCODE(6),
+	enumThread2 = MYCTLCODE(7),
 }MyCtlCode;
 
-// 获取缓冲区
-void GetUserBuf(IRP* pIrp, void** ppBuf)
-{
-	IO_STACK_LOCATION* pStack = IoGetCurrentIrpStackLocation(pIrp);
-	ULONG ulDeviceCtrlCode = pStack->Parameters.DeviceIoControl.IoControlCode;
-
-	if (pIrp->MdlAddress && (METHOD_FROM_CTL_CODE(ulDeviceCtrlCode) & METHOD_OUT_DIRECT))
-	{
-		*ppBuf = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
-	}
-	else if (pIrp->AssociatedIrp.SystemBuffer)
-	{
-		*ppBuf = pIrp->AssociatedIrp.SystemBuffer;
-	}
-	else
-	{
-		*ppBuf = NULL;
-		KdPrint(("[**WARNING**]pBuf == NULL\n"));
-	}
-
-}
+//// 获取缓冲区
+//void GetUserBuf(IRP* pIrp, void** ppBuf)
+//{
+//	IO_STACK_LOCATION* pStack = IoGetCurrentIrpStackLocation(pIrp);
+//	ULONG ulDeviceCtrlCode = pStack->Parameters.DeviceIoControl.IoControlCode;
+//
+//	if (pIrp->MdlAddress && (METHOD_FROM_CTL_CODE(ulDeviceCtrlCode) & METHOD_OUT_DIRECT))
+//	{
+//		*ppBuf = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+//	}
+//	else if (pIrp->AssociatedIrp.SystemBuffer)
+//	{
+//		*ppBuf = pIrp->AssociatedIrp.SystemBuffer;
+//	}
+//	else
+//	{
+//		*ppBuf = NULL;
+//		KdPrint(("[**WARNING**]pBuf == NULL\n"));
+//	}
+//
+//}
 
 // 自定义控制码的派遣函数
 NTSTATUS OnEnumDriver1(DEVICE_OBJECT *pDevice, IRP *pIrp)
@@ -91,15 +137,15 @@ NTSTATUS OnEnumDriver1(DEVICE_OBJECT *pDevice, IRP *pIrp)
 		pBuff = pIrp->UserBuffer;
 	else
 		pBuff = NULL;
-// 若调试状态则下断
+	// 若调试状态则下断
 #ifdef _DEBUG
 	KdBreakPoint();
 #endif
 	// 3 获取驱动个数
 	ULONG driverCount = 0;
-	__try 
+	__try
 	{
-		do 
+		do
 		{
 			driverCount++;
 			pLdr = (PLDR_DATA_TABLE_ENTRY)pLdr->InLoadOrderLinks.Flink;
@@ -138,17 +184,17 @@ NTSTATUS OnEnumDriver2(DEVICE_OBJECT *pDevice, IRP *pIrp)
 #endif
 
 	// 3 将数据写入3环缓冲区
-	PDRIVERINFO pDriverInfo=(PDRIVERINFO)pBuff;
-	__try 
+	PDRIVERINFO pDriverInfo = (PDRIVERINFO)pBuff;
+	__try
 	{
-		do 
+		do
 		{
 			// 写入各字段
 			//RtlCopyMemory(pDriverInfo->name, pLdr->FullDllName.Buffer, pLdr->FullDllName.Length);// here 乱码
-			wcscpy_s(pDriverInfo->name, sizeof(pDriverInfo->name), pLdr->FullDllName.Buffer);
+			_tcscpy_s(pDriverInfo->name, sizeof(pDriverInfo->name), pLdr->FullDllName.Buffer);
 			pDriverInfo->base = pLdr->DllBase;
 			pDriverInfo->size = pLdr->SizeOfImage;
-			
+
 			pDriverInfo++;// 指针后移
 			pLdr = (PLDR_DATA_TABLE_ENTRY)pLdr->InLoadOrderLinks.Flink;
 		} while (pBegin != pLdr);
@@ -162,6 +208,329 @@ NTSTATUS OnEnumDriver2(DEVICE_OBJECT *pDevice, IRP *pIrp)
 	pIrp->IoStatus.Information = (ULONG)pDriverInfo - (ULONG)pBuff;// 尾地址-首地址=传输大小
 	return status;
 }
+NTSTATUS OnEnumProcess1(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 3 获取进程数
+	ULONG ProcessCount = 0;
+	PEPROCESS proc = NULL;
+	// 设定PID范围,循环遍历
+	for (int i = 4; i < 100000; i += 4)
+	{
+		// 若通过PID能找到EPROCESS
+		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
+		{
+			ProcessCount++;// 个数+1 
+			KdPrint(("%d : %s\n", ProcessCount, PsGetProcessImageFileName(proc)));
+			ObDereferenceObject(proc);// 递减引用计数
+		}
+	}
+	// 4 数据传输-写入3环
+	RtlCopyMemory(pBuff, &ProcessCount, sizeof(ProcessCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = sizeof(ProcessCount);// 总共传输字节数
+	return status;
+}
+NTSTATUS OnEnumProcess2(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 3 获取进程数
+	//ULONG ProcessCount = 0;
+	PEPROCESS proc = NULL;
+	PPROCESSINFO pProcessInfo = (PPROCESSINFO)pBuff;
+	// 设定PID范围,循环遍历
+	for (int i = 4; i < 100000; i += 4)
+	{
+		// 若通过PID能找到EPROCESS
+		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
+		{
+			// char 拷贝至wchar,3环插入list前,用%大S来格式化,小s乱码
+			_tcscpy_s(pProcessInfo->name, sizeof(pProcessInfo->name), PsGetProcessImageFileName(proc));
+			pProcessInfo->PID = PsGetProcessId(proc);
+
+			pProcessInfo++;// 指针后移
+			ObDereferenceObject(proc);// 递减引用计数
+		}
+	}
+	// 4 数据传输-写入3环
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = (ULONG)pProcessInfo - (ULONG)pBuff;// 总共传输字节数
+	return status;
+}
+NTSTATUS OnEnumModule1(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 3 获取当前进程模块数
+	KdBreakPoint();
+	ULONG ModuleCount = 0;
+	ULONG ProcessCount = 0;
+	PEPROCESS proc = NULL;
+	int ProcIndex = *(int*)pBuff;// 当前进程
+	// 设定PID范围,循环遍历
+	for (int i = 4; i < 100000; i += 4)
+	{
+		// 若通过PID能找到EPROCESS
+		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
+		{
+			// 找到相对应的进程
+			if (ProcIndex == ProcessCount)
+			{
+				// 遍历模块
+				// 1. 找到PEB(由于PEB在用户层空间,因此需要进程挂靠
+				KAPC_STATE kapc_status = { 0 };
+				KeStackAttachProcess(proc, &kapc_status);
+				// 2. 找到PEB.Ldr(模块链表)
+				struct _PEB* peb = PsGetProcessPeb(proc);
+				if (peb != NULL)
+				{
+					__try {
+						// 3. 遍历模块链表
+						LDR_DATA_TABLE_ENTRY* pLdrEntry = (LDR_DATA_TABLE_ENTRY*)peb->Ldr->InLoadOrderModuleList.Flink;
+						LDR_DATA_TABLE_ENTRY* pBegin = pLdrEntry;
+						do
+						{
+							KdPrint(("\t%d BASE:%p SIZE:%06X %wZ\n",
+								ModuleCount,
+								pLdrEntry->DllBase,
+								pLdrEntry->SizeOfImage,
+								&pLdrEntry->FullDllName));
+
+							ModuleCount++;
+							// 找到下一个
+							pLdrEntry = (LDR_DATA_TABLE_ENTRY*)pLdrEntry->InLoadOrderLinks.Flink;
+						} while (pBegin != pLdrEntry);
+					}
+					__except (EXCEPTION_EXECUTE_HANDLER) {}
+				}
+
+				
+				KeUnstackDetachProcess(&kapc_status);// 解除挂靠
+				ObDereferenceObject(proc);// 递减引用计数
+			}
+			ProcessCount++;// 进程个数+1 			
+		}
+	}
+
+	// 4 数据传输-写入3环
+	RtlCopyMemory(pBuff, &ModuleCount, sizeof(ModuleCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = sizeof(ModuleCount);// 总共传输字节数
+	return status;
+}
+NTSTATUS OnEnumModule2(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 3 获取当前进程模块数
+	KdBreakPoint();
+	ULONG ModuleCount = 0;
+	ULONG ProcessCount = 0;
+	PEPROCESS proc = NULL;
+	int ProcIndex = *(int*)pBuff;// 当前进程,先将缓冲区作输入用
+	PMODULEINFO pModuleInfo = NULL;
+	// 设定PID范围,循环遍历
+	for (int i = 4; i < 100000; i += 4)
+	{
+		// 若通过PID能找到EPROCESS
+		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
+		{
+			// 找到相对应的进程
+			if (ProcIndex == ProcessCount)
+			{
+				// 遍历模块
+				// 1. 找到PEB(由于PEB在用户层空间,因此需要进程挂靠
+				KAPC_STATE kapc_status = { 0 };
+				KeStackAttachProcess(proc, &kapc_status);
+				// 2. 找到PEB.Ldr(模块链表)
+				struct _PEB* peb = PsGetProcessPeb(proc);
+				if (peb != NULL)
+				{
+					pModuleInfo = (PMODULEINFO)pBuff;// 再将缓冲区作输出用
+					__try {
+						// 3. 遍历模块链表
+						LDR_DATA_TABLE_ENTRY* pLdrEntry = (LDR_DATA_TABLE_ENTRY*)peb->Ldr->InLoadOrderModuleList.Flink;
+						LDR_DATA_TABLE_ENTRY* pBegin = pLdrEntry;
+						do
+						{
+							KdPrint(("\t%d BASE:%p SIZE:%06X %wZ\n",
+								ModuleCount,
+								pLdrEntry->DllBase,
+								pLdrEntry->SizeOfImage,
+								&pLdrEntry->FullDllName));
+
+							// 写入各字段
+							_tcscpy_s(pModuleInfo->name, sizeof(pModuleInfo->name), pLdrEntry->FullDllName.Buffer);
+							pModuleInfo->base = pLdrEntry->DllBase;
+							pModuleInfo->size = pLdrEntry->SizeOfImage;
+
+							pModuleInfo++;// 指针后移
+
+							ModuleCount++;
+							// 找到下一个
+							pLdrEntry = (LDR_DATA_TABLE_ENTRY*)pLdrEntry->InLoadOrderLinks.Flink;
+						} while (pBegin != pLdrEntry);
+					}
+					__except (EXCEPTION_EXECUTE_HANDLER) {}
+				}
+
+
+				KeUnstackDetachProcess(&kapc_status);// 解除挂靠
+				ObDereferenceObject(proc);// 递减引用计数
+			}
+			ProcessCount++;// 进程个数+1 			
+		}
+	}
+
+	// 4 数据传输-写入3环
+	//RtlCopyMemory(pBuff, &ModuleCount, sizeof(ModuleCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = (ULONG)pModuleInfo - (ULONG)pBuff;// 尾地址-首地址=传输大小
+	return status;
+}
+NTSTATUS OnEnumThread1(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 3 获取进程数
+	ULONG ProcessCount = 0;
+	PEPROCESS proc = NULL;
+	// 设定PID范围,循环遍历
+	for (int i = 4; i < 100000; i += 4)
+	{
+		// 若通过PID能找到EPROCESS
+		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
+		{
+			ProcessCount++;// 个数+1 
+			KdPrint(("%d : %s\n", ProcessCount, PsGetProcessImageFileName(proc)));
+			ObDereferenceObject(proc);// 递减引用计数
+		}
+	}
+	// 4 数据传输-写入3环
+	RtlCopyMemory(pBuff, &ProcessCount, sizeof(ProcessCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = sizeof(ProcessCount);// 总共传输字节数
+	return status;
+}
+NTSTATUS OnEnumThread2(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 3 获取进程数
+	//ULONG ProcessCount = 0;
+	PEPROCESS proc = NULL;
+	PPROCESSINFO pProcessInfo = (PPROCESSINFO)pBuff;
+	// 设定PID范围,循环遍历
+	for (int i = 4; i < 100000; i += 4)
+	{
+		// 若通过PID能找到EPROCESS
+		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
+		{
+			// char 拷贝至wchar,3环插入list前,用%大S来格式化,小s乱码
+			_tcscpy_s(pProcessInfo->name, sizeof(pProcessInfo->name), PsGetProcessImageFileName(proc));
+			pProcessInfo->PID = PsGetProcessId(proc);
+
+			pProcessInfo++;// 指针后移
+			ObDereferenceObject(proc);// 递减引用计数
+		}
+	}
+	// 4 数据传输-写入3环
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = (ULONG)pProcessInfo - (ULONG)pBuff;// 总共传输字节数
+	return status;
+}
 // 绑定控制码与派遣函数
 typedef struct _DeivecIoCtrlhandler
 {
@@ -172,6 +541,12 @@ DeivecIoCtrlhandler g_handler[] =
 {
 	 {enumDriver1 , OnEnumDriver1},
 	 {enumDriver2 , OnEnumDriver2},
+	 {enumProcess1 , OnEnumProcess1},
+	 {enumProcess2 , OnEnumProcess2},
+	 {enumThread1 , OnEnumThread1},
+	 {enumThread2 , OnEnumThread2},
+	 {enumModule1 , OnEnumModule1},
+	 {enumModule2 , OnEnumModule2},
 };
 
 // 全局变量
@@ -180,14 +555,14 @@ LDR_DATA_TABLE_ENTRY* pBegin = NULL;
 int driverCount = 0;
 
 // 卸载函数
-void OnUnload(DRIVER_OBJECT* object) 
+void OnUnload(DRIVER_OBJECT* object)
 {
 	KdPrint(("驱动被卸载\n"));
 	// 卸载设备
-    IoDeleteDevice(object->DeviceObject);
+	IoDeleteDevice(object->DeviceObject);
 	// 删除符号链接
-    UNICODE_STRING symName = RTL_CONSTANT_STRING(NAME_SYMBOL);
-    IoDeleteSymbolicLink(&symName);
+	UNICODE_STRING symName = RTL_CONSTANT_STRING(NAME_SYMBOL);
+	IoDeleteSymbolicLink(&symName);
 }
 // 派遣函数
 NTSTATUS OnCreate(DEVICE_OBJECT *pDevice, IRP *pIrp)
@@ -209,7 +584,7 @@ NTSTATUS OnClose(DEVICE_OBJECT *pDevice, IRP *pIrp)
 NTSTATUS OnDeviceIoControl(DEVICE_OBJECT *pDevice, IRP *pIrp)
 {
 	pDevice;
-	DbgBreakPoint();
+	//DbgBreakPoint();
 	// 1 获取IO缓存区(二者共用
 	TCHAR* pBuff = NULL;
 	if (pIrp->MdlAddress != NULL)
@@ -226,7 +601,7 @@ NTSTATUS OnDeviceIoControl(DEVICE_OBJECT *pDevice, IRP *pIrp)
 	ULONG uOutputLen = pIoStack->Parameters.DeviceIoControl.OutputBufferLength;//输出缓冲区字节数
 	ULONG uCtrlCode = pIoStack->Parameters.DeviceIoControl.IoControlCode;//控制码
 	KdPrint(("控制码:%08X 输入长度:%d 输出长度:%d\n", uCtrlCode, uInputLen, uOutputLen));
-	
+
 	// 3 调用相应的派遣函数
 	for (int i = 0; i < _countof(g_handler); ++i)
 	{
@@ -359,34 +734,34 @@ NTSTATUS OnDeviceIoControl(DEVICE_OBJECT *pDevice, IRP *pIrp)
 // 入口
 NTSTATUS DriverEntry(DRIVER_OBJECT* pDriverObj, UNICODE_STRING* path)
 {
-    path;
-    KdPrint(("驱动被加载\n"));
-    NTSTATUS status = STATUS_SUCCESS;
+	path;
+	KdPrint(("驱动被加载\n"));
+	NTSTATUS status = STATUS_SUCCESS;
 	// 1 绑定卸载函数
-    pDriverObj->DriverUnload = &OnUnload;
+	pDriverObj->DriverUnload = &OnUnload;
 	// 2 创建设备对象
-    UNICODE_STRING devName = RTL_CONSTANT_STRING(NAME_DEVICE);
-    DEVICE_OBJECT* pDevice = NULL;// 保存新设备对象的指针.
-    status = IoCreateDevice(pDriverObj,0,&devName,FILE_DEVICE_UNKNOWN,0,0,&pDevice);
-    if (!NT_SUCCESS(status)) 
+	UNICODE_STRING devName = RTL_CONSTANT_STRING(NAME_DEVICE);
+	DEVICE_OBJECT* pDevice = NULL;// 保存新设备对象的指针.
+	status = IoCreateDevice(pDriverObj, 0, &devName, FILE_DEVICE_UNKNOWN, 0, 0, &pDevice);
+	if (!NT_SUCCESS(status))
 	{
-        KdPrint(("创建设备失败,错误码:%08X\n", status));
-        return status;
-    }
-    pDevice->Flags |= DO_BUFFERED_IO;// 通讯方式
+		KdPrint(("创建设备失败,错误码:%08X\n", status));
+		return status;
+	}
+	pDevice->Flags |= DO_BUFFERED_IO;// 通讯方式
 	// 3 绑定符号链接
-    UNICODE_STRING symbolName = RTL_CONSTANT_STRING(NAME_SYMBOL);
-    IoCreateSymbolicLink(&symbolName,&devName);
+	UNICODE_STRING symbolName = RTL_CONSTANT_STRING(NAME_SYMBOL);
+	IoCreateSymbolicLink(&symbolName, &devName);
 	// 4 绑定派遣函数
-    pDriverObj->MajorFunction[IRP_MJ_CREATE] = &OnCreate;
-    pDriverObj->MajorFunction[IRP_MJ_CLOSE] = &OnClose;
-    pDriverObj->MajorFunction[IRP_MJ_DEVICE_CONTROL] = &OnDeviceIoControl;
+	pDriverObj->MajorFunction[IRP_MJ_CREATE] = &OnCreate;
+	pDriverObj->MajorFunction[IRP_MJ_CLOSE] = &OnClose;
+	pDriverObj->MajorFunction[IRP_MJ_DEVICE_CONTROL] = &OnDeviceIoControl;
 
 
 	//pLdr = (LDR_DATA_TABLE_ENTRY*)pDriverObj->DriverSection;
 	//pBegin = pLdr;
 
-    return status;
+	return status;
 }
 
 

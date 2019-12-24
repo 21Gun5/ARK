@@ -10,6 +10,12 @@ typedef enum MyCtlCode
 {
 	enumDriver1 = MYCTLCODE(0),
 	enumDriver2 = MYCTLCODE(1),
+	enumProcess1 = MYCTLCODE(2),
+	enumProcess2 = MYCTLCODE(3),
+	enumModule1 = MYCTLCODE(4),
+	enumModule2 = MYCTLCODE(5),
+	enumThread1 = MYCTLCODE(6),
+	enumThread2 = MYCTLCODE(7),
 };
 
 extern HANDLE g_hDev;
@@ -49,6 +55,19 @@ typedef struct _DRIVERINFO
 	DWORD size;
 	TCHAR name[260];
 }DRIVERINFO, *PDRIVERINFO;
+
+typedef struct _PROCESSINFO
+{
+	DWORD PID;
+	TCHAR name[260];
+}PROCESSINFO, *PPROCESSINFO;
+
+typedef struct _MODULEINFO
+{
+	PVOID base;
+	DWORD size;
+	TCHAR name[260];
+}MODULEINFO, *PMODULEINFO;
 
 // ¶ÔDeviceIoControlµÄ·â×°.
 //void ark_readprocmemroy(HANDLE hDev, int pid, char* dest, int size);

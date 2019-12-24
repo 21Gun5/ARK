@@ -83,6 +83,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
+    <OutDir>..\Output</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
@@ -187,6 +188,7 @@
     <ClInclude Include="ARK_r3.h" />
     <ClInclude Include="ARK_r3Dlg.h" />
     <ClInclude Include="CDlgDriver.h" />
+    <ClInclude Include="CDlgModule.h" />
     <ClInclude Include="CDlgProcess.h" />
     <ClInclude Include="CDlgThread.h" />
     <ClInclude Include="Resource.h" />
@@ -198,6 +200,7 @@
     <ClCompile Include="ARK_r3.cpp" />
     <ClCompile Include="ARK_r3Dlg.cpp" />
     <ClCompile Include="CDlgDriver.cpp" />
+    <ClCompile Include="CDlgModule.cpp" />
     <ClCompile Include="CDlgProcess.cpp" />
     <ClCompile Include="CDlgThread.cpp" />
     <ClCompile Include="stdafx.cpp">
