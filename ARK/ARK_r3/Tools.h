@@ -18,6 +18,9 @@ typedef enum MyCtlCode
 	enumThread2 = MYCTLCODE(7),
 	enumIDT1 = MYCTLCODE(8),
 	enumGDT1 = MYCTLCODE(9),
+	HideDriver = MYCTLCODE(10),
+	HideProcess = MYCTLCODE(11),
+	KillProcess = MYCTLCODE(12),
 };
 
 extern HANDLE g_hDev;

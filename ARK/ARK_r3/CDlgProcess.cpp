@@ -37,6 +37,8 @@ BEGIN_MESSAGE_MAP(CDlgProcess, CDialogEx)
 	ON_COMMAND(ID_ENUMTHRE, &CDlgProcess::OnEnumthread)
 	ON_COMMAND(ID_ENUMMODU, &CDlgProcess::OnEnummodu)
 	ON_NOTIFY(NM_RCLICK, IDC_LIST1, &CDlgProcess::OnRclickList1)
+	//ON_BN_CLICKED(IDC_BUTTON_RENEW, &CDlgProcess::OnBnClickedButtonRenew)
+	ON_COMMAND(ID_RENEW, &CDlgProcess::OnRenew)
 END_MESSAGE_MAP()
 
 
@@ -89,49 +91,31 @@ BOOL CDlgProcess::OnInitDialog()
 				  // 异常: OCX 属性页应返回 FALSE
 }
 
-//void CDlgProcess::OnBnClickedButton1()
-//{
-//	// TODO: 在此添加控件通知处理程序代码
-//
-//	// 第一次,确定有多少个
-//	DWORD size = 0;
-//	DWORD count = 0;
-//	DeviceIoControl(g_hDev, enumProcess1, NULL, 0, &count, sizeof(DWORD), &size, NULL);
-//	// 第二次,获取所有数据
-//	PPROCESSINFO pProcessInfo = new PROCESSINFO[count * sizeof(PROCESSINFO)]{0};// 申请堆空间,并初始化为0
-//	DeviceIoControl(g_hDev, enumProcess2, NULL, 0, pProcessInfo, count * sizeof(PROCESSINFO), &size, NULL);
-//	// 循环插入
-//	DWORD index = 0;
-//	for (DWORD i = 0; i < count; i++)
-//	{
-//		CString tmp;
-//		// 插入行
-//		m_list.InsertItem(index, _TEXT(""));
-//		// 插入数据
-//		tmp.Format(_TEXT("%d"), i);
-//		m_list.SetItemText(index, 0, tmp);
-//		tmp.Format(_TEXT("%d"), pProcessInfo->PID);
-//		m_list.SetItemText(index, 1, tmp);
-//		tmp.Format(_TEXT("%S"), pProcessInfo->name);//用大S,宽字符(驱动时用小s,因二者在0环获取时不同
-//		m_list.SetItemText(index, 2, tmp);
-//		// 下一行 下一驱动
-//		pProcessInfo++;
-//		index++;
-//	}
-//}
 
 
 void CDlgProcess::OnKillprocess()
 {
 	// TODO: 在此添加命令处理程序代码
 
-
+	//MessageBox(_TEXT("敬请期待"));
+	
+	// 获取被点击的驱动（通过光标选择序号，序号从1开始，故-1
+	DWORD index = (int)m_list.GetFirstSelectedItemPosition() - 1;
+	DWORD size = 0;
+	DeviceIoControl(g_hDev, KillProcess, &index, sizeof(DWORD), NULL, 0, &size, NULL);
 }
 
 
 void CDlgProcess::OnHideprocess()
 {
 	// TODO: 在此添加命令处理程序代码
+	//MessageBox(_TEXT("敬请期待"));
+
+	// 获取被点击的驱动（通过光标选择序号，序号从1开始，故-1
+	DWORD index = (int)m_list.GetFirstSelectedItemPosition() - 1;
+	DWORD size = 0;
+	DeviceIoControl(g_hDev, HideProcess, &index, sizeof(DWORD), NULL, 0, &size, NULL);
+
 }
 
 
@@ -164,6 +148,38 @@ void CDlgProcess::OnEnummodu()
 	moduleDlg.DoModal();
 }
 
+void CDlgProcess::OnRenew()
+{
+	// TODO: 在此添加命令处理程序代码
+	m_list.DeleteAllItems();
+
+	// 第一次,确定有多少个
+	DWORD size = 0;
+	DWORD count = 0;
+	DeviceIoControl(g_hDev, enumProcess1, NULL, 0, &count, sizeof(DWORD), &size, NULL);
+	// 第二次,获取所有数据
+	PPROCESSINFO pProcessInfo = new PROCESSINFO[count * sizeof(PROCESSINFO)]{ 0 };// 申请堆空间,并初始化为0
+	DeviceIoControl(g_hDev, enumProcess2, NULL, 0, pProcessInfo, count * sizeof(PROCESSINFO), &size, NULL);
+	// 循环插入
+	DWORD index = 0;
+	for (DWORD i = 0; i < count; i++)
+	{
+		CString tmp;
+		// 插入行
+		m_list.InsertItem(index, _TEXT(""));
+		// 插入数据
+		tmp.Format(_TEXT("%d"), i);
+		m_list.SetItemText(index, 0, tmp);
+		tmp.Format(_TEXT("%d"), pProcessInfo->PID);
+		m_list.SetItemText(index, 1, tmp);
+		tmp.Format(_TEXT("%S"), pProcessInfo->name);//用大S,宽字符(驱动时用小s,因二者在0环获取时不同
+		m_list.SetItemText(index, 2, tmp);
+		// 下一行 下一驱动
+		pProcessInfo++;
+		index++;
+	}
+}
+
 void CDlgProcess::OnRclickList1(NMHDR *pNMHDR, LRESULT *pResult)
 {
 	LPNMITEMACTIVATE pNMItemActivate = reinterpret_cast<LPNMITEMACTIVATE>(pNMHDR);
@@ -175,3 +191,40 @@ void CDlgProcess::OnRclickList1(NMHDR *pNMHDR, LRESULT *pResult)
 	GetCursorPos(&pos);
 	pSubMenu->TrackPopupMenu(0, pos.x, pos.y, this);
 }
+
+
+//void CDlgProcess::OnBnClickedButtonRenew()
+//{
+//	// TODO: 在此添加控件通知处理程序代码
+//
+//	m_list.DeleteAllItems();
+//
+//	// 第一次,确定有多少个
+//	DWORD size = 0;
+//	DWORD count = 0;
+//	DeviceIoControl(g_hDev, enumProcess1, NULL, 0, &count, sizeof(DWORD), &size, NULL);
+//	// 第二次,获取所有数据
+//	PPROCESSINFO pProcessInfo = new PROCESSINFO[count * sizeof(PROCESSINFO)]{ 0 };// 申请堆空间,并初始化为0
+//	DeviceIoControl(g_hDev, enumProcess2, NULL, 0, pProcessInfo, count * sizeof(PROCESSINFO), &size, NULL);
+//	// 循环插入
+//	DWORD index = 0;
+//	for (DWORD i = 0; i < count; i++)
+//	{
+//		CString tmp;
+//		// 插入行
+//		m_list.InsertItem(index, _TEXT(""));
+//		// 插入数据
+//		tmp.Format(_TEXT("%d"), i);
+//		m_list.SetItemText(index, 0, tmp);
+//		tmp.Format(_TEXT("%d"), pProcessInfo->PID);
+//		m_list.SetItemText(index, 1, tmp);
+//		tmp.Format(_TEXT("%S"), pProcessInfo->name);//用大S,宽字符(驱动时用小s,因二者在0环获取时不同
+//		m_list.SetItemText(index, 2, tmp);
+//		// 下一行 下一驱动
+//		pProcessInfo++;
+//		index++;
+//	}
+//}
+
+
+

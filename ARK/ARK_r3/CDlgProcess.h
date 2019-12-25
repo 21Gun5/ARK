@@ -32,4 +32,6 @@ public:
 	afx_msg void OnEnumthread();
 	afx_msg void OnEnummodu();
 	afx_msg void OnRclickList1(NMHDR *pNMHDR, LRESULT *pResult);
+//	afx_msg void OnBnClickedButtonRenew();
+	afx_msg void OnRenew();
 };

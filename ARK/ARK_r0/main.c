@@ -153,6 +153,9 @@ typedef enum _MyCtlCode
 	enumThread2 = MYCTLCODE(7),
 	enumIDT1 = MYCTLCODE(8),
 	enumGDT1 = MYCTLCODE(9),
+	HideDriver = MYCTLCODE(10),
+	HideProcess = MYCTLCODE(11),
+	KillProcess = MYCTLCODE(12),
 }MyCtlCode;
 
 // 自定义控制码的派遣函数
@@ -272,9 +275,15 @@ NTSTATUS OnEnumProcess1(DEVICE_OBJECT *pDevice, IRP *pIrp)
 		// 若通过PID能找到EPROCESS
 		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
 		{
-			ProcessCount++;// 个数+1 
-			KdPrint(("%d : %s\n", ProcessCount, PsGetProcessImageFileName(proc)));
-			ObDereferenceObject(proc);// 递减引用计数
+			// 进一步判断进程是否有效
+			ULONG TableCode = *(ULONG*)((ULONG)proc + 0xF4);
+			if (TableCode)
+			{
+				ProcessCount++;// 个数+1 
+				KdPrint(("%d : %s\n", ProcessCount, PsGetProcessImageFileName(proc)));
+				ObDereferenceObject(proc);// 递减引用计数
+			}
+
 		}
 	}
 	// 4 数据传输-写入3环
@@ -312,12 +321,16 @@ NTSTATUS OnEnumProcess2(DEVICE_OBJECT *pDevice, IRP *pIrp)
 		// 若通过PID能找到EPROCESS
 		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
 		{
-			// char 拷贝至wchar,3环插入list前,用%大S来格式化,小s乱码
-			_tcscpy_s(pProcessInfo->name, sizeof(pProcessInfo->name), PsGetProcessImageFileName(proc));
-			pProcessInfo->PID = PsGetProcessId(proc);
+			ULONG TableCode = *(ULONG*)((ULONG)proc + 0xF4);
+			if (TableCode)
+			{
+				// char 拷贝至wchar,3环插入list前,用%大S来格式化,小s乱码
+				_tcscpy_s(pProcessInfo->name, sizeof(pProcessInfo->name), PsGetProcessImageFileName(proc));
+				pProcessInfo->PID = PsGetProcessId(proc);
 
-			pProcessInfo++;// 指针后移
-			ObDereferenceObject(proc);// 递减引用计数
+				pProcessInfo++;// 指针后移
+				ObDereferenceObject(proc);// 递减引用计数
+			}
 		}
 	}
 	// 4 数据传输-写入3环
@@ -356,42 +369,48 @@ NTSTATUS OnEnumModule1(DEVICE_OBJECT *pDevice, IRP *pIrp)
 		// 若通过PID能找到EPROCESS
 		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
 		{
-			// 找到相对应的进程
-			if (ProcIndex == ProcessCount)
+			ULONG TableCode = *(ULONG*)((ULONG)proc + 0xF4);
+			if (TableCode)
 			{
-				// 遍历模块
-				// 1. 找到PEB(由于PEB在用户层空间,因此需要进程挂靠
-				KAPC_STATE kapc_status = { 0 };
-				KeStackAttachProcess(proc, &kapc_status);
-				// 2. 找到PEB.Ldr(模块链表)
-				struct _PEB* peb = PsGetProcessPeb(proc);
-				if (peb != NULL)
+
+
+				// 找到相对应的进程
+				if (ProcIndex == ProcessCount)
 				{
-					__try {
-						// 3. 遍历模块链表
-						LDR_DATA_TABLE_ENTRY* pLdrEntry = (LDR_DATA_TABLE_ENTRY*)peb->Ldr->InLoadOrderModuleList.Flink;
-						LDR_DATA_TABLE_ENTRY* pBegin = pLdrEntry;
-						do
-						{
-							KdPrint(("\t%d BASE:%p SIZE:%06X %wZ\n",
-								ModuleCount,
-								pLdrEntry->DllBase,
-								pLdrEntry->SizeOfImage,
-								&pLdrEntry->FullDllName));
+					// 遍历模块
+					// 1. 找到PEB(由于PEB在用户层空间,因此需要进程挂靠
+					KAPC_STATE kapc_status = { 0 };
+					KeStackAttachProcess(proc, &kapc_status);
+					// 2. 找到PEB.Ldr(模块链表)
+					struct _PEB* peb = PsGetProcessPeb(proc);
+					if (peb != NULL)
+					{
+						__try {
+							// 3. 遍历模块链表
+							LDR_DATA_TABLE_ENTRY* pLdrEntry = (LDR_DATA_TABLE_ENTRY*)peb->Ldr->InLoadOrderModuleList.Flink;
+							LDR_DATA_TABLE_ENTRY* pBegin = pLdrEntry;
+							do
+							{
+								KdPrint(("\t%d BASE:%p SIZE:%06X %wZ\n",
+									ModuleCount,
+									pLdrEntry->DllBase,
+									pLdrEntry->SizeOfImage,
+									&pLdrEntry->FullDllName));
 
-							ModuleCount++;
-							// 找到下一个
-							pLdrEntry = (LDR_DATA_TABLE_ENTRY*)pLdrEntry->InLoadOrderLinks.Flink;
-						} while (pBegin != pLdrEntry);
+								ModuleCount++;
+								// 找到下一个
+								pLdrEntry = (LDR_DATA_TABLE_ENTRY*)pLdrEntry->InLoadOrderLinks.Flink;
+							} while (pBegin != pLdrEntry);
+						}
+						__except (EXCEPTION_EXECUTE_HANDLER) {}
 					}
-					__except (EXCEPTION_EXECUTE_HANDLER) {}
-				}
 
-				
-				KeUnstackDetachProcess(&kapc_status);// 解除挂靠
-				ObDereferenceObject(proc);// 递减引用计数
+
+					KeUnstackDetachProcess(&kapc_status);// 解除挂靠
+					ObDereferenceObject(proc);// 递减引用计数
+				}
+				ProcessCount++;// 进程个数+1 	
 			}
-			ProcessCount++;// 进程个数+1 			
 		}
 	}
 
@@ -433,50 +452,54 @@ NTSTATUS OnEnumModule2(DEVICE_OBJECT *pDevice, IRP *pIrp)
 		// 若通过PID能找到EPROCESS
 		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
 		{
-			// 找到相对应的进程
-			if (ProcIndex == ProcessCount)
+			ULONG TableCode = *(ULONG*)((ULONG)proc + 0xF4);
+			if (TableCode)
 			{
-				// 遍历模块
-				// 1. 找到PEB(由于PEB在用户层空间,因此需要进程挂靠
-				KAPC_STATE kapc_status = { 0 };
-				KeStackAttachProcess(proc, &kapc_status);
-				// 2. 找到PEB.Ldr(模块链表)
-				struct _PEB* peb = PsGetProcessPeb(proc);
-				if (peb != NULL)
+				// 找到相对应的进程
+				if (ProcIndex == ProcessCount)
 				{
-					pModuleInfo = (PMODULEINFO)pBuff;// 再将缓冲区作输出用
-					__try {
-						// 3. 遍历模块链表
-						LDR_DATA_TABLE_ENTRY* pLdrEntry = (LDR_DATA_TABLE_ENTRY*)peb->Ldr->InLoadOrderModuleList.Flink;
-						LDR_DATA_TABLE_ENTRY* pBegin = pLdrEntry;
-						do
-						{
-							KdPrint(("\t%d BASE:%p SIZE:%06X %wZ\n",
-								ModuleCount,
-								pLdrEntry->DllBase,
-								pLdrEntry->SizeOfImage,
-								&pLdrEntry->FullDllName));
+					// 遍历模块
+					// 1. 找到PEB(由于PEB在用户层空间,因此需要进程挂靠
+					KAPC_STATE kapc_status = { 0 };
+					KeStackAttachProcess(proc, &kapc_status);
+					// 2. 找到PEB.Ldr(模块链表)
+					struct _PEB* peb = PsGetProcessPeb(proc);
+					if (peb != NULL)
+					{
+						pModuleInfo = (PMODULEINFO)pBuff;// 再将缓冲区作输出用
+						__try {
+							// 3. 遍历模块链表
+							LDR_DATA_TABLE_ENTRY* pLdrEntry = (LDR_DATA_TABLE_ENTRY*)peb->Ldr->InLoadOrderModuleList.Flink;
+							LDR_DATA_TABLE_ENTRY* pBegin = pLdrEntry;
+							do
+							{
+								KdPrint(("\t%d BASE:%p SIZE:%06X %wZ\n",
+									ModuleCount,
+									pLdrEntry->DllBase,
+									pLdrEntry->SizeOfImage,
+									&pLdrEntry->FullDllName));
 
-							// 写入各字段
-							_tcscpy_s(pModuleInfo->name, sizeof(pModuleInfo->name), pLdrEntry->FullDllName.Buffer);
-							pModuleInfo->base = pLdrEntry->DllBase;
-							pModuleInfo->size = pLdrEntry->SizeOfImage;
+								// 写入各字段
+								_tcscpy_s(pModuleInfo->name, sizeof(pModuleInfo->name), pLdrEntry->FullDllName.Buffer);
+								pModuleInfo->base = pLdrEntry->DllBase;
+								pModuleInfo->size = pLdrEntry->SizeOfImage;
 
-							pModuleInfo++;// 指针后移
+								pModuleInfo++;// 指针后移
 
-							ModuleCount++;
-							// 找到下一个
-							pLdrEntry = (LDR_DATA_TABLE_ENTRY*)pLdrEntry->InLoadOrderLinks.Flink;
-						} while (pBegin != pLdrEntry);
+								ModuleCount++;
+								// 找到下一个
+								pLdrEntry = (LDR_DATA_TABLE_ENTRY*)pLdrEntry->InLoadOrderLinks.Flink;
+							} while (pBegin != pLdrEntry);
+						}
+						__except (EXCEPTION_EXECUTE_HANDLER) {}
 					}
-					__except (EXCEPTION_EXECUTE_HANDLER) {}
+
+
+					KeUnstackDetachProcess(&kapc_status);// 解除挂靠
+					ObDereferenceObject(proc);// 递减引用计数
 				}
-
-
-				KeUnstackDetachProcess(&kapc_status);// 解除挂靠
-				ObDereferenceObject(proc);// 递减引用计数
+				ProcessCount++;// 进程个数+1 	
 			}
-			ProcessCount++;// 进程个数+1 			
 		}
 	}
 
@@ -518,32 +541,36 @@ NTSTATUS OnEnumThread1(DEVICE_OBJECT *pDevice, IRP *pIrp)
 		// 若通过PID能找到EPROCESS
 		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &pEProcess)))
 		{
-			// 找到相对应的进程
-			if (ProcIndex == ProcessCount)
+			ULONG TableCode = *(ULONG*)((ULONG)pEProcess + 0xF4);
+			if (TableCode)
 			{
-				//KdBreakPoint();
-				KdPrint(("\tPID:%d %s\n", (ULONG)PsGetProcessId(pEProcess), PsGetProcessImageFileName(pEProcess)));
-
-				// 遍历线程
-				for (ULONG j = 4; j < 0x25600; j += 4)
+				// 找到相对应的进程
+				if (ProcIndex == ProcessCount)
 				{
-					// 若通过TID能找到ETHREAD
-					if (NT_SUCCESS(PsLookupThreadByThreadId((HANDLE)j, &pEThread)))
-					{
-						// 获取线程所属进程,若相等则
-						PEPROCESS proc = IoThreadToProcess(pEThread);
-						if (pEProcess == proc)
-						{
-							KdPrint(("\t%d TID:%d\n", ThreadCount, (ULONG)PsGetThreadId(pEThread)));
-							ThreadCount++;
-						}
-						ObDereferenceObject(pEThread);// 递减引用计数
-					}
-				}
+					//KdBreakPoint();
+					KdPrint(("\tPID:%d %s\n", (ULONG)PsGetProcessId(pEProcess), PsGetProcessImageFileName(pEProcess)));
 
-				ObDereferenceObject(pEProcess);// 递减引用计数
+					// 遍历线程
+					for (ULONG j = 4; j < 0x25600; j += 4)
+					{
+						// 若通过TID能找到ETHREAD
+						if (NT_SUCCESS(PsLookupThreadByThreadId((HANDLE)j, &pEThread)))
+						{
+							// 获取线程所属进程,若相等则
+							PEPROCESS proc = IoThreadToProcess(pEThread);
+							if (pEProcess == proc)
+							{
+								KdPrint(("\t%d TID:%d\n", ThreadCount, (ULONG)PsGetThreadId(pEThread)));
+								ThreadCount++;
+							}
+							ObDereferenceObject(pEThread);// 递减引用计数
+						}
+					}
+
+					ObDereferenceObject(pEProcess);// 递减引用计数
+				}
+				ProcessCount++;// 进程个数+1 
 			}
-			ProcessCount++;// 进程个数+1 			
 		}
 	}
 	// 4 数据传输-写入3环
@@ -585,39 +612,43 @@ NTSTATUS OnEnumThread2(DEVICE_OBJECT *pDevice, IRP *pIrp)
 		// 若通过PID能找到EPROCESS
 		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &pEProcess)))
 		{
-			// 找到相对应的进程
-			if (ProcIndex == ProcessCount)
+			ULONG TableCode = *(ULONG*)((ULONG)pEProcess + 0xF4);
+			if (TableCode)
 			{
-				pThreadInfo = (PTHREADINFO)pBuff;// 再将缓冲区作输出用
-				//KdBreakPoint();
-				KdPrint(("\tPID:%d %s\n", (ULONG)PsGetProcessId(pEProcess), PsGetProcessImageFileName(pEProcess)));
-
-				// 遍历线程
-				for (ULONG j = 4; j < 1000; j += 4)
+				// 找到相对应的进程
+				if (ProcIndex == ProcessCount)
 				{
-					// 若通过TID能找到ETHREAD
-					if (NT_SUCCESS(PsLookupThreadByThreadId((HANDLE)j, &pEThread)))
+					pThreadInfo = (PTHREADINFO)pBuff;// 再将缓冲区作输出用
+					//KdBreakPoint();
+					KdPrint(("\tPID:%d %s\n", (ULONG)PsGetProcessId(pEProcess), PsGetProcessImageFileName(pEProcess)));
+
+					// 遍历线程
+					for (ULONG j = 4; j < 1000; j += 4)
 					{
-						// 获取线程所属进程,若相等则
-						PEPROCESS proc = IoThreadToProcess(pEThread);
-						if (pEProcess == proc)
+						// 若通过TID能找到ETHREAD
+						if (NT_SUCCESS(PsLookupThreadByThreadId((HANDLE)j, &pEThread)))
 						{
+							// 获取线程所属进程,若相等则
+							PEPROCESS proc = IoThreadToProcess(pEThread);
+							if (pEProcess == proc)
+							{
 
-							// 写入各字段
-							pThreadInfo->TID = PsGetThreadId(pEThread);
-							//pThreadInfo->OwnerPID = PsGetProcessId(pEProcess);
-							pThreadInfo++;// 指针后移
+								// 写入各字段
+								pThreadInfo->TID = PsGetThreadId(pEThread);
+								//pThreadInfo->OwnerPID = PsGetProcessId(pEProcess);
+								pThreadInfo++;// 指针后移
 
-							KdPrint(("\t%d TID:%d\n", ThreadCount, (ULONG)PsGetThreadId(pEThread)));
-							ThreadCount++;
+								KdPrint(("\t%d TID:%d\n", ThreadCount, (ULONG)PsGetThreadId(pEThread)));
+								ThreadCount++;
+							}
+							ObDereferenceObject(pEThread);// 递减引用计数
 						}
-						ObDereferenceObject(pEThread);// 递减引用计数
 					}
-				}
 
-				ObDereferenceObject(pEProcess);// 递减引用计数
+					ObDereferenceObject(pEProcess);// 递减引用计数
+				}
+				ProcessCount++;// 进程个数+1 
 			}
-			ProcessCount++;// 进程个数+1 			
 		}
 	}
 	// 4 数据传输-写入3环
@@ -694,7 +725,7 @@ NTSTATUS OnEnumGDT1(DEVICE_OBJECT *pDevice, IRP *pIrp)
 		pBuff = NULL;
 
 	// 遍历GDT
-	KdBreakPoint();
+	//KdBreakPoint();
 	GDT_INFO SGDT = { 0,0,0 };
 	PGDT_ENTRY pGDTEntry = NULL;
 	ULONG uAddr = 0;
@@ -743,6 +774,198 @@ NTSTATUS OnEnumGDT1(DEVICE_OBJECT *pDevice, IRP *pIrp)
 	pIrp->IoStatus.Information = (ULONG)pGDTInfo - (ULONG)pBuff;// 总共传输字节数
 	return status;
 }
+NTSTATUS OnHideDriver(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 1 获取双向链表首地址
+	PDRIVER_OBJECT pDriver = pDevice->DriverObject;// 设备对象归属的驱动对象
+	PLDR_DATA_TABLE_ENTRY pLdr = pDriver->DriverSection;// 多条驱动信息构成的双向链表
+	PLDR_DATA_TABLE_ENTRY pBegin = pLdr;// 链表首地址
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+	// 3 获取驱动个数
+	KdBreakPoint();
+	ULONG driverCount = 0;
+	int driverIndex = *(int*)pBuff;// 当前驱动
+	__try
+	{
+		do
+		{
+			// 找到目标驱动
+			if (driverIndex == driverCount)
+			{
+				KdPrint(("%d %08X | %06X | %wZ\n", driverCount, pLdr->DllBase, pLdr->SizeOfImage, &pLdr->FullDllName));
+
+				// 修改Flink和Blink指针,来跳过要隐藏的驱动
+				// (前 目标 后)三个,前指后,后指前,跳过中间的目标
+				*((ULONG*)pLdr->InLoadOrderLinks.Blink) = (ULONG)pLdr->InLoadOrderLinks.Flink;
+				pLdr->InLoadOrderLinks.Flink->Blink = pLdr->InLoadOrderLinks.Blink;
+				// 避免造成随机性的BSoD(蓝屏
+				pLdr->InLoadOrderLinks.Flink = (LIST_ENTRY*)&(pLdr->InLoadOrderLinks.Flink);
+				pLdr->InLoadOrderLinks.Blink = (LIST_ENTRY*)&(pLdr->InLoadOrderLinks.Flink);
+
+				break;
+			}
+			driverCount++;
+			pLdr = (PLDR_DATA_TABLE_ENTRY)pLdr->InLoadOrderLinks.Flink;
+		} while (pBegin != pLdr);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint(("Exception: 0x%08X\n", GetExceptionCode()));
+	}
+	// 4 数据传输-写入3环
+	//RtlCopyMemory(pBuff, &driverCount, sizeof(driverCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = 0;// 总共传输字节数
+	return status;
+}
+NTSTATUS OnHideProcess(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 3 获取进程数
+	//KdBreakPoint();
+	int processIndex = *(int*)pBuff;// 目标进程
+	ULONG ProcessCount = 0;
+	PEPROCESS proc = NULL;
+	// 设定PID范围,循环遍历
+	for (int i = 4; i < 100000; i += 4)
+	{
+		// 若通过PID能找到EPROCESS
+		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
+		{
+			ULONG TableCode = *(ULONG*)((ULONG)proc + 0xF4);
+			if (TableCode)
+			{
+
+
+				// 找到要隐藏的目标进程
+				if (processIndex == ProcessCount)
+				{
+					KdPrint(("%d : %s\n", ProcessCount, PsGetProcessImageFileName(proc)));
+
+					// 获取进程对象内的当前活动进程链表
+					LIST_ENTRY* pProcList = (LIST_ENTRY*)((ULONG)proc + 0xB8);
+
+					// 修改Flink和Blink指针,来跳过要隐藏的驱动(前 目标 后)
+					*((ULONG*)pProcList->Blink) = (ULONG)pProcList->Flink;//后指前
+					pProcList->Flink->Blink = pProcList->Blink;//前指后
+					// 避免造成随机性的BSoD(蓝屏
+					pProcList->Flink = (LIST_ENTRY*)&(pProcList->Flink);
+					pProcList->Blink = (LIST_ENTRY*)&(pProcList->Flink);
+
+					break;
+
+				}
+				ProcessCount++;// 个数+1 
+
+				ObDereferenceObject(proc);// 递减引用计数
+			}
+
+		}
+	}
+	// 4 数据传输-写入3环
+	//RtlCopyMemory(pBuff, &ProcessCount, sizeof(ProcessCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = 0;// 总共传输字节数
+	return status;
+}
+NTSTATUS OnKillProcess(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 3 获取进程数
+	//KdBreakPoint();
+	int processIndex = *(int*)pBuff;// 目标进程
+	ULONG ProcessCount = 0;
+	PEPROCESS proc = NULL;
+	// 设定PID范围,循环遍历
+	for (int i = 4; i < 100000; i += 4)
+	{
+		// 若通过PID能找到EPROCESS
+		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
+		{
+			ULONG TableCode = *(ULONG*)((ULONG)proc + 0xF4);
+			if (TableCode)
+			{
+				// 找到要结束的目标进程
+				if (processIndex == ProcessCount)
+				{
+					KdPrint(("%d : %s\n", ProcessCount, PsGetProcessImageFileName(proc)));
+
+					// 结束进程
+					HANDLE hProcess = NULL;
+					OBJECT_ATTRIBUTES objAttribute = { sizeof(OBJECT_ATTRIBUTES) };
+					CLIENT_ID clientID = { 0 };
+					clientID.UniqueProcess = (HANDLE)PsGetProcessId(proc);
+					clientID.UniqueThread = 0;
+					ZwOpenProcess(&hProcess, 1, &objAttribute, &clientID);//获取进程句柄
+					if (hProcess)
+					{
+						ZwTerminateProcess(hProcess, 0);
+						ZwClose(hProcess);
+					}
+
+					break;
+
+				}
+				ProcessCount++;// 个数+1 
+
+				ObDereferenceObject(proc);// 递减引用计数
+			}
+
+
+		}
+	}
+	// 4 数据传输-写入3环
+	//RtlCopyMemory(pBuff, &ProcessCount, sizeof(ProcessCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = 0;// 总共传输字节数
+	return status;
+}
 
 // 绑定控制码与派遣函数
 typedef struct _DeivecIoCtrlhandler
@@ -762,6 +985,9 @@ DeivecIoCtrlhandler g_handler[] =
 	 {enumModule2 , OnEnumModule2},
 	 {enumIDT1 , OnEnumIDT1},
 	 {enumGDT1 , OnEnumGDT1},
+	 {HideDriver,OnHideDriver},
+	 {HideProcess,OnHideProcess},
+	 {KillProcess,OnKillProcess},
 };
 
 // 全局变量
@@ -944,7 +1170,6 @@ NTSTATUS OnDeviceIoControl(DEVICE_OBJECT *pDevice, IRP *pIrp)
 
 	return STATUS_SUCCESS;
 }
-
 
 // 入口
 NTSTATUS DriverEntry(DRIVER_OBJECT* pDriverObj, UNICODE_STRING* path)
