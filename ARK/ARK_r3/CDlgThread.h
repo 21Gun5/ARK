@@ -20,4 +20,9 @@ protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV 支持
 
 	DECLARE_MESSAGE_MAP()
+public:
+	CListCtrl m_list;
+	DWORD m_curProcIndex;
+	virtual BOOL OnInitDialog();
+	void SetCurProcessIndex(DWORD index);
 };

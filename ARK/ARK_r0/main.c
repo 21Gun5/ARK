@@ -8,6 +8,8 @@
 #define NAME_DEVICE L"\\Device\\deviceARK"
 #define NAME_SYMBOL L"\\DosDevices\\deviceARK"
 
+#define MAKELONG(a,b) ((LONG)(((UINT16)(((DWORD_PTR)(a))&0xffff)) | ((ULONG)((UINT16)(((DWORD_PTR)(b))& 0xffff)))<<16))
+
 // 事先声明函数
 NTKERNELAPI CHAR* PsGetProcessImageFileName(PEPROCESS proc);
 NTKERNELAPI struct _PEB* PsGetProcessPeb(PEPROCESS proc);
@@ -22,7 +24,6 @@ struct _PEB
 	void* ImageBaseAddress;                                                 //0x8
 	struct _PEB_LDR_DATA* Ldr;
 };
-//0x30 bytes (sizeof)
 struct _PEB_LDR_DATA
 {
 	ULONG Length;                                                           //0x0
@@ -35,7 +36,6 @@ struct _PEB_LDR_DATA
 	UCHAR ShutdownInProgress;                                               //0x28
 	VOID* ShutdownThreadId;                                                 //0x2c
 };
-// LDR数据结构体
 typedef struct _LDR_DATA_TABLE_ENTRY {
 	LIST_ENTRY InLoadOrderLinks;    //双向链表
 	LIST_ENTRY InMemoryOrderLinks;
@@ -64,25 +64,81 @@ typedef struct _LDR_DATA_TABLE_ENTRY {
 		}s3;
 	}u2;
 } LDR_DATA_TABLE_ENTRY, *PLDR_DATA_TABLE_ENTRY;
-// 驱动信息结构体
 typedef struct _DRIVERINFO
 {
 	PVOID base;
 	ULONG size;
 	TCHAR name[260];
 }DRIVERINFO, *PDRIVERINFO;
-// 进程信息结构体
 typedef struct _PROCESSINFO
 {
 	ULONG PID;
 	TCHAR name[260];
 }PROCESSINFO, *PPROCESSINFO;
+typedef struct _THREADINFO
+{
+	ULONG TID;
+}THREADINFO, *PTHREADINFO;
 typedef struct _MODULEINFO
 {
 	PVOID base;
 	ULONG size;
 	TCHAR name[260];
 }MODULEINFO, *PMODULEINFO;
+typedef struct _IDTINFO
+{
+	ULONG uSelector;
+	ULONG addr;
+	ULONG GateType;
+	ULONG DPL;
+}IDTINFO, *PIDTINFO;
+typedef struct _GDTINFO
+{
+	UINT64 Limit : 20;
+	UINT64 Base : 32;
+	UINT64 P : 1;
+	UINT64 S : 1;
+	UINT64 Type : 4;
+	UINT64 DPL : 2;
+	UINT64 D_B : 1;
+	UINT64 G : 1;
+}GDTINFO, *PGDTINFO;
+
+typedef struct _IDT_INFO
+{
+	UINT16 uIdtLimit;
+	UINT16 uLowIdtBase;
+	UINT16 uHighIdtBase;
+}IDT_INFO,*PIDT_INFO;
+typedef struct _IDT_ENTRY
+{
+	UINT16 uSelector;
+	UINT16 uOffsetLow;
+	UINT16 uOffsetHigh;
+	UINT8 GateType : 4;
+	UINT8 DPL : 2;
+}IDT_ENTRY, *PIDT_ENTRY;
+typedef struct _GDT_INFO
+{
+	UINT16 uGdtLimit;
+	UINT16 uLowGdtBase;
+	UINT16 uHighGdtBase;
+}GDT_INFO, *PGDT_INFO;
+typedef struct _GDT_ENTRY
+{
+	UINT64 Limit_0_15 : 16;
+	UINT64 Limit_16_19 : 4;
+	UINT64 Base16_31 : 16;
+	UINT64 Base0_7 : 8;
+	UINT64 Base24_31 : 8;
+	UINT64 Type : 4;
+	UINT64 S : 1;
+	UINT64 DPL : 2;
+	UINT64 P : 1;
+	UINT64 D_B : 1;
+	UINT64 G : 1;
+}GDT_ENTRY, *PGDT_ENTRY;
+
 // 自定义控制码
 #define MYCTLCODE(code) CTL_CODE(FILE_DEVICE_UNKNOWN,0x800+(code),METHOD_BUFFERED,FILE_ANY_ACCESS)
 typedef enum _MyCtlCode
@@ -95,29 +151,9 @@ typedef enum _MyCtlCode
 	enumModule2 = MYCTLCODE(5),
 	enumThread1 = MYCTLCODE(6),
 	enumThread2 = MYCTLCODE(7),
+	enumIDT1 = MYCTLCODE(8),
+	enumGDT1 = MYCTLCODE(9),
 }MyCtlCode;
-
-//// 获取缓冲区
-//void GetUserBuf(IRP* pIrp, void** ppBuf)
-//{
-//	IO_STACK_LOCATION* pStack = IoGetCurrentIrpStackLocation(pIrp);
-//	ULONG ulDeviceCtrlCode = pStack->Parameters.DeviceIoControl.IoControlCode;
-//
-//	if (pIrp->MdlAddress && (METHOD_FROM_CTL_CODE(ulDeviceCtrlCode) & METHOD_OUT_DIRECT))
-//	{
-//		*ppBuf = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
-//	}
-//	else if (pIrp->AssociatedIrp.SystemBuffer)
-//	{
-//		*ppBuf = pIrp->AssociatedIrp.SystemBuffer;
-//	}
-//	else
-//	{
-//		*ppBuf = NULL;
-//		KdPrint(("[**WARNING**]pBuf == NULL\n"));
-//	}
-//
-//}
 
 // 自定义控制码的派遣函数
 NTSTATUS OnEnumDriver1(DEVICE_OBJECT *pDevice, IRP *pIrp)
@@ -309,7 +345,7 @@ NTSTATUS OnEnumModule1(DEVICE_OBJECT *pDevice, IRP *pIrp)
 #endif
 
 	// 3 获取当前进程模块数
-	KdBreakPoint();
+	//KdBreakPoint();
 	ULONG ModuleCount = 0;
 	ULONG ProcessCount = 0;
 	PEPROCESS proc = NULL;
@@ -385,7 +421,7 @@ NTSTATUS OnEnumModule2(DEVICE_OBJECT *pDevice, IRP *pIrp)
 #endif
 
 	// 3 获取当前进程模块数
-	KdBreakPoint();
+	//KdBreakPoint();
 	ULONG ModuleCount = 0;
 	ULONG ProcessCount = 0;
 	PEPROCESS proc = NULL;
@@ -469,30 +505,57 @@ NTSTATUS OnEnumThread1(DEVICE_OBJECT *pDevice, IRP *pIrp)
 	KdBreakPoint();
 #endif
 
-	// 3 获取进程数
+	// 3 获取当前进程模块数
+	//KdBreakPoint();
+	ULONG ThreadCount = 0;
 	ULONG ProcessCount = 0;
-	PEPROCESS proc = NULL;
+	PEPROCESS pEProcess = NULL;
+	PETHREAD pEThread = NULL;
+	int ProcIndex = *(int*)pBuff;// 当前进程
 	// 设定PID范围,循环遍历
 	for (int i = 4; i < 100000; i += 4)
 	{
 		// 若通过PID能找到EPROCESS
-		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
+		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &pEProcess)))
 		{
-			ProcessCount++;// 个数+1 
-			KdPrint(("%d : %s\n", ProcessCount, PsGetProcessImageFileName(proc)));
-			ObDereferenceObject(proc);// 递减引用计数
+			// 找到相对应的进程
+			if (ProcIndex == ProcessCount)
+			{
+				//KdBreakPoint();
+				KdPrint(("\tPID:%d %s\n", (ULONG)PsGetProcessId(pEProcess), PsGetProcessImageFileName(pEProcess)));
+
+				// 遍历线程
+				for (ULONG j = 4; j < 0x25600; j += 4)
+				{
+					// 若通过TID能找到ETHREAD
+					if (NT_SUCCESS(PsLookupThreadByThreadId((HANDLE)j, &pEThread)))
+					{
+						// 获取线程所属进程,若相等则
+						PEPROCESS proc = IoThreadToProcess(pEThread);
+						if (pEProcess == proc)
+						{
+							KdPrint(("\t%d TID:%d\n", ThreadCount, (ULONG)PsGetThreadId(pEThread)));
+							ThreadCount++;
+						}
+						ObDereferenceObject(pEThread);// 递减引用计数
+					}
+				}
+
+				ObDereferenceObject(pEProcess);// 递减引用计数
+			}
+			ProcessCount++;// 进程个数+1 			
 		}
 	}
 	// 4 数据传输-写入3环
-	RtlCopyMemory(pBuff, &ProcessCount, sizeof(ProcessCount));//内存拷贝
+	RtlCopyMemory(pBuff, &ThreadCount, sizeof(ThreadCount));//内存拷贝
 	pIrp->IoStatus.Status = status;// 完成状态
-	pIrp->IoStatus.Information = sizeof(ProcessCount);// 总共传输字节数
+	pIrp->IoStatus.Information = sizeof(ThreadCount);// 总共传输字节数
 	return status;
 }
 NTSTATUS OnEnumThread2(DEVICE_OBJECT *pDevice, IRP *pIrp)
 {
 	NTSTATUS status = STATUS_SUCCESS;// 返回状态
-// 2 获取IO缓存区(二者共用
+	// 2 获取IO缓存区(二者共用
 	TCHAR* pBuff = NULL;
 	if (pIrp->MdlAddress != NULL)
 		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
@@ -508,29 +571,179 @@ NTSTATUS OnEnumThread2(DEVICE_OBJECT *pDevice, IRP *pIrp)
 	KdBreakPoint();
 #endif
 
-	// 3 获取进程数
-	//ULONG ProcessCount = 0;
-	PEPROCESS proc = NULL;
-	PPROCESSINFO pProcessInfo = (PPROCESSINFO)pBuff;
+	// 3 获取当前进程模块数
+	//KdBreakPoint();
+	ULONG ThreadCount = 0;
+	ULONG ProcessCount = 0;
+	PEPROCESS pEProcess = NULL;
+	PETHREAD pEThread = NULL;
+	int ProcIndex = *(int*)pBuff;// 当前进程
+	PTHREADINFO pThreadInfo = NULL;
 	// 设定PID范围,循环遍历
-	for (int i = 4; i < 100000; i += 4)
+	for (int i = 4; i < 1000; i += 4)
 	{
 		// 若通过PID能找到EPROCESS
-		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &proc)))
+		if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)i, &pEProcess)))
 		{
-			// char 拷贝至wchar,3环插入list前,用%大S来格式化,小s乱码
-			_tcscpy_s(pProcessInfo->name, sizeof(pProcessInfo->name), PsGetProcessImageFileName(proc));
-			pProcessInfo->PID = PsGetProcessId(proc);
+			// 找到相对应的进程
+			if (ProcIndex == ProcessCount)
+			{
+				pThreadInfo = (PTHREADINFO)pBuff;// 再将缓冲区作输出用
+				//KdBreakPoint();
+				KdPrint(("\tPID:%d %s\n", (ULONG)PsGetProcessId(pEProcess), PsGetProcessImageFileName(pEProcess)));
 
-			pProcessInfo++;// 指针后移
-			ObDereferenceObject(proc);// 递减引用计数
+				// 遍历线程
+				for (ULONG j = 4; j < 1000; j += 4)
+				{
+					// 若通过TID能找到ETHREAD
+					if (NT_SUCCESS(PsLookupThreadByThreadId((HANDLE)j, &pEThread)))
+					{
+						// 获取线程所属进程,若相等则
+						PEPROCESS proc = IoThreadToProcess(pEThread);
+						if (pEProcess == proc)
+						{
+
+							// 写入各字段
+							pThreadInfo->TID = PsGetThreadId(pEThread);
+							//pThreadInfo->OwnerPID = PsGetProcessId(pEProcess);
+							pThreadInfo++;// 指针后移
+
+							KdPrint(("\t%d TID:%d\n", ThreadCount, (ULONG)PsGetThreadId(pEThread)));
+							ThreadCount++;
+						}
+						ObDereferenceObject(pEThread);// 递减引用计数
+					}
+				}
+
+				ObDereferenceObject(pEProcess);// 递减引用计数
+			}
+			ProcessCount++;// 进程个数+1 			
 		}
 	}
 	// 4 数据传输-写入3环
+	//RtlCopyMemory(pBuff, &ThreadCount, sizeof(ThreadCount));//内存拷贝
 	pIrp->IoStatus.Status = status;// 完成状态
-	pIrp->IoStatus.Information = (ULONG)pProcessInfo - (ULONG)pBuff;// 总共传输字节数
+	pIrp->IoStatus.Information = (ULONG)pThreadInfo - (ULONG)pBuff;// 总共传输字节数
 	return status;
 }
+NTSTATUS OnEnumIDT1(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+
+	// 遍历IDT
+	//KdBreakPoint();
+	IDT_INFO SIDT = { 0,0,0 };
+	PIDT_ENTRY pIDTEntry = NULL;
+	ULONG uAddr = 0;
+	// 获取IDT表地址
+	_asm sidt SIDT;
+	// 获取IDT表数组地址
+	pIDTEntry = (PIDT_ENTRY)MAKELONG(SIDT.uLowIdtBase, SIDT.uHighIdtBase);
+	// 获取IDT信息
+	//ULONG IDTEntryCount = 0;
+	PIDTINFO pIDTInfo = (PIDTINFO)pBuff;
+	KdPrint(("---------------中断描述符表---------\n"));
+	for (ULONG i = 0; i < 0x100; i++)
+	{
+		ULONG Idt_address = MAKELONG(pIDTEntry[i].uOffsetLow, pIDTEntry[i].uOffsetHigh);
+		KdPrint(("addr: %08X, int: %d, selector: %d, GateType:%d, DPL: %d\n",
+			Idt_address,// 中断地址
+			i,// 中断号
+			pIDTEntry[i].uSelector,// 段选择子
+			pIDTEntry[i].GateType,//类型
+			pIDTEntry[i].DPL//特权等级
+			));
+		pIDTInfo->addr = Idt_address;
+		pIDTInfo->uSelector = pIDTEntry[i].uSelector;
+		pIDTInfo->GateType = pIDTEntry[i].GateType;
+		pIDTInfo->DPL = pIDTEntry[i].DPL;
+
+		pIDTInfo++;// 指针后移
+
+		//IDTEntryCount++;
+	}
+
+	// 4 数据传输-写入3环
+	//RtlCopyMemory(pBuff, &IDTEntryCount, sizeof(IDTEntryCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information =(ULONG)pIDTInfo-(ULONG)pBuff;// 总共传输字节数
+	return status;
+}
+NTSTATUS OnEnumGDT1(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+
+	// 遍历GDT
+	KdBreakPoint();
+	GDT_INFO SGDT = { 0,0,0 };
+	PGDT_ENTRY pGDTEntry = NULL;
+	ULONG uAddr = 0;
+	// 获取GDT表地址
+	_asm sgdt SGDT;
+	// 获取GDT表数组地址
+	pGDTEntry = (PGDT_ENTRY)MAKELONG(SGDT.uLowGdtBase, SGDT.uHighGdtBase);
+	// 获取GDT信息
+	//ULONG GDTEntryCount = 0;
+	PGDTINFO pGDTInfo = (PGDTINFO)pBuff;
+	KdPrint(("---------------中断描述符表---------\n"));
+	for (ULONG i = 0; i < 0x100; i++)
+	{
+		ULONG Gdt_address = 0;
+		Gdt_address = MAKELONG(pGDTEntry[i].Base16_31, pGDTEntry[i].Base0_7);
+		Gdt_address = MAKELONG(Gdt_address, pGDTEntry[i].Base24_31);
+		ULONG Gdt_limit = MAKELONG(pGDTEntry[i].Limit_0_15, pGDTEntry[i].Limit_16_19);
+		// 打印
+		KdPrint(("addr: %08X, limit: %d, P: %d, G:%d, S:%d,Type:%d,D/B:%d,DPL:%d\n",
+			Gdt_address, Gdt_limit,
+			pGDTEntry[i].P,
+			pGDTEntry[i].G,
+			pGDTEntry[i].S,
+			pGDTEntry[i].Type,
+			pGDTEntry[i].D_B,
+			pGDTEntry[i].DPL
+			));
+		// 拷贝
+		pGDTInfo->Base = Gdt_address;
+		pGDTInfo->Limit = Gdt_limit;
+		pGDTInfo->P = pGDTEntry[i].P;
+		pGDTInfo->G = pGDTEntry[i].G;
+		pGDTInfo->S = pGDTEntry[i].S;
+		pGDTInfo->Type = pGDTEntry[i].Type;
+		pGDTInfo->D_B = pGDTEntry[i].D_B;
+		pGDTInfo->DPL = pGDTEntry[i].DPL;
+
+		pGDTInfo++;// 指针后移
+
+		//GDTEntryCount++;
+	}
+
+	// 4 数据传输-写入3环
+	//RtlCopyMemory(pBuff, &GDTEntryCount, sizeof(GDTEntryCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = (ULONG)pGDTInfo - (ULONG)pBuff;// 总共传输字节数
+	return status;
+}
+
 // 绑定控制码与派遣函数
 typedef struct _DeivecIoCtrlhandler
 {
@@ -547,6 +760,8 @@ DeivecIoCtrlhandler g_handler[] =
 	 {enumThread2 , OnEnumThread2},
 	 {enumModule1 , OnEnumModule1},
 	 {enumModule2 , OnEnumModule2},
+	 {enumIDT1 , OnEnumIDT1},
+	 {enumGDT1 , OnEnumGDT1},
 };
 
 // 全局变量

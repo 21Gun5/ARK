@@ -33,9 +33,6 @@
     <ClInclude Include="CDlgProcess.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="CDlgThread.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="CDlgDriver.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -43,6 +40,18 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="CDlgModule.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="CDlgFile.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="CDlgThread.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="CDlgIDT.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="CDlgGDT.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
@@ -59,9 +68,6 @@
     <ClCompile Include="CDlgProcess.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="CDlgThread.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="CDlgDriver.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -69,6 +75,18 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="CDlgModule.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="CDlgFile.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="CDlgThread.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="CDlgIDT.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="CDlgGDT.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

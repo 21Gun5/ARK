@@ -7,6 +7,7 @@
 #include "afxdialogex.h"
 #include "Tools.h"
 #include "CDlgModule.h"
+#include "CDlgThread.h"
 
 
 // CDlgProcess 对话框
@@ -123,6 +124,8 @@ BOOL CDlgProcess::OnInitDialog()
 void CDlgProcess::OnKillprocess()
 {
 	// TODO: 在此添加命令处理程序代码
+
+
 }
 
 
@@ -135,8 +138,16 @@ void CDlgProcess::OnHideprocess()
 void CDlgProcess::OnEnumthread()
 {
 	// TODO: 在此添加命令处理程序代码
-	
 
+	// 创建模块对话框
+	CDlgThread threadDlg(this);
+	// 获取被点击的进程（通过光标选择序号，序号从1开始，故-1
+	int index = (int)m_list.GetFirstSelectedItemPosition() - 1;
+	// 传递当前进程索引
+
+	threadDlg.SetCurProcessIndex(index);
+	// 运行对话框
+	threadDlg.DoModal();
 }
 
 

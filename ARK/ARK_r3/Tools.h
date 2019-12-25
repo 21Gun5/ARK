@@ -16,6 +16,8 @@ typedef enum MyCtlCode
 	enumModule2 = MYCTLCODE(5),
 	enumThread1 = MYCTLCODE(6),
 	enumThread2 = MYCTLCODE(7),
+	enumIDT1 = MYCTLCODE(8),
+	enumGDT1 = MYCTLCODE(9),
 };
 
 extern HANDLE g_hDev;
@@ -62,12 +64,36 @@ typedef struct _PROCESSINFO
 	TCHAR name[260];
 }PROCESSINFO, *PPROCESSINFO;
 
+typedef struct _THREADINFO
+{
+	DWORD TID;
+}THREADINFO, *PTHREADINFO;
+
 typedef struct _MODULEINFO
 {
 	PVOID base;
 	DWORD size;
 	TCHAR name[260];
 }MODULEINFO, *PMODULEINFO;
+typedef struct _IDTINFO
+{
+	ULONG uSelector;
+	ULONG addr;
+	ULONG GateType;
+	ULONG DPL;
+}IDTINFO, *PIDTINFO;
+
+typedef struct _GDTINFO
+{
+	UINT64 Limit : 20;
+	UINT64 Base : 32;
+	UINT64 P : 1;
+	UINT64 S : 1;
+	UINT64 Type : 4;
+	UINT64 DPL : 2;
+	UINT64 D_B : 1;
+	UINT64 G : 1;
+}GDTINFO, *PGDTINFO;
 
 // ¶ÔDeviceIoControlµÄ·â×°.
 //void ark_readprocmemroy(HANDLE hDev, int pid, char* dest, int size);

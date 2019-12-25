@@ -9,8 +9,11 @@
 
 #include "CDlgDriver.h"
 #include "CDlgProcess.h"
-#include "CDlgThread.h"
+#include "CDlgFile.h"
+#include "CDlgIDT.h"
+#include "CDlgGDT.h"
 #include "Tools.h"
+
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -130,7 +133,9 @@ BOOL CARKr3Dlg::OnInitDialog()
 	// 2 初始化选项卡控件
 	m_tab.InsertItem(0, L"驱动");
 	m_tab.InsertItem(1, L"进程");
-	m_tab.InsertItem(2, L"线程");
+	m_tab.InsertItem(2, L"文件");
+	m_tab.InsertItem(3, L"IDT");
+	m_tab.InsertItem(4, L"GDT");
 
 	// 3 初始化三个选项卡对应的窗口
 	// 新创建的窗口，父类指针[必须]为选项卡控件，如果不进行设置，那么
@@ -139,14 +144,18 @@ BOOL CARKr3Dlg::OnInitDialog()
 	m_tabWnd[0]->Create(IDD_DIALOG_DRIVER, &m_tab);
 	m_tabWnd[1] = new CDlgProcess;
 	m_tabWnd[1]->Create(IDD_DIALOG_PROCESS, &m_tab);
-	m_tabWnd[2] = new CDlgThread;
-	m_tabWnd[2]->Create(IDD_DIALOG_THREAD, &m_tab);
+	m_tabWnd[2] = new CDlgFile;
+	m_tabWnd[2]->Create(IDD_DIALOG_FILE, &m_tab);
+	m_tabWnd[3] = new CDlgIDT;
+	m_tabWnd[3]->Create(IDD_DIALOG_IDT, &m_tab);
+	m_tabWnd[4] = new CDlgGDT;
+	m_tabWnd[4]->Create(IDD_DIALOG_GDT, &m_tab);
 
 	// 4 以选项卡为准，重新设置窗口的位置
 	CRect Rect = { 0 };
 	m_tab.GetClientRect(&Rect);
 	Rect.DeflateRect(8, 33, 10, 10);
-	for (int i = 0; i < 3; ++i)
+	for (int i = 0; i < 5; ++i)
 		m_tabWnd[i]->MoveWindow(&Rect);
 
 	// 5 默认显示第一个窗口
@@ -209,7 +218,7 @@ HCURSOR CARKr3Dlg::OnQueryDragIcon()
 // 显示选项卡内的指定项
 void CARKr3Dlg::ShowTabWnd(int index)
 {
-	for (int i = 0; i < 3; ++i)
+	for (int i = 0; i < 5; ++i)
 	{
 		m_tabWnd[i]->ShowWindow(i == index ? SW_SHOWNORMAL : SW_HIDE);
 	}
