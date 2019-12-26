@@ -4,15 +4,19 @@
 #include <tchar.h>
 #include <wchar.h>
 
+
+
+
 // 设备\符号链接名
 #define NAME_DEVICE L"\\Device\\deviceARK"
 #define NAME_SYMBOL L"\\DosDevices\\deviceARK"
 
 #define MAKELONG(a,b) ((LONG)(((UINT16)(((DWORD_PTR)(a))&0xffff)) | ((ULONG)((UINT16)(((DWORD_PTR)(b))& 0xffff)))<<16))
 
-// 事先声明函数
+// 事先声明函数 
 NTKERNELAPI CHAR* PsGetProcessImageFileName(PEPROCESS proc);
 NTKERNELAPI struct _PEB* PsGetProcessPeb(PEPROCESS proc);
+
 
 struct _PEB
 {
@@ -103,13 +107,26 @@ typedef struct _GDTINFO
 	UINT64 D_B : 1;
 	UINT64 G : 1;
 }GDTINFO, *PGDTINFO;
+typedef struct _FILEINFO
+{
+	TCHAR fileName[260];
+	ULONGLONG size;
+	ULONG attribute;
+	ULONGLONG createTime;
+	ULONGLONG changeTime;
+}FILEINFO, *PFILEINFO;
+typedef struct _SSDTINFO
+{
+	ULONG funcAddr;
+	//ULONG paramCount;
+}SSDTINFO, *PSSDTINFO;
 
 typedef struct _IDT_INFO
 {
 	UINT16 uIdtLimit;
 	UINT16 uLowIdtBase;
 	UINT16 uHighIdtBase;
-}IDT_INFO,*PIDT_INFO;
+}IDT_INFO, *PIDT_INFO;
 typedef struct _IDT_ENTRY
 {
 	UINT16 uSelector;
@@ -139,6 +156,23 @@ typedef struct _GDT_ENTRY
 	UINT64 G : 1;
 }GDT_ENTRY, *PGDT_ENTRY;
 
+#pragma pack(1)
+typedef  struct  _KSYSTEM_SERVICE_TABLE
+{
+	PULONG  ServiceTableBase;   //函数地址表的首地址
+	PULONG  ServiceCounterTableBase;// 函数表中每个函数被调用的次数
+	ULONG   NumberOfService;// 服务函数的个数, NumberOfService * 4 就是整个地址表的大小
+	UCHAR*   ParamTableBase; // 参数个数表首地址
+} KSYSTEM_SERVICE_TABLE, *PKSYSTEM_SERVICE_TABLE;
+typedef  struct  _KSERVICE_TABLE_DESCRIPTOR
+{
+	KSYSTEM_SERVICE_TABLE   ntoskrnl;// ntoskrnl.exe的服务函数，即SSDT
+	KSYSTEM_SERVICE_TABLE   win32k; // win32k.sys的服务函数(GDI32.dll/User32.dll 的内核支持)，即ShadowSSDT
+	KSYSTEM_SERVICE_TABLE   notUsed1; // 不使用
+	KSYSTEM_SERVICE_TABLE   notUsed2; // 不使用
+}KSERVICE_TABLE_DESCRIPTOR, *PKSERVICE_TABLE_DESCRIPTOR;
+
+
 // 自定义控制码
 #define MYCTLCODE(code) CTL_CODE(FILE_DEVICE_UNKNOWN,0x800+(code),METHOD_BUFFERED,FILE_ANY_ACCESS)
 typedef enum _MyCtlCode
@@ -156,7 +190,203 @@ typedef enum _MyCtlCode
 	HideDriver = MYCTLCODE(10),
 	HideProcess = MYCTLCODE(11),
 	KillProcess = MYCTLCODE(12),
+	enumFile1 = MYCTLCODE(13),
+	enumFile2 = MYCTLCODE(14),
+	deleteFile = MYCTLCODE(15),
+	enumSSDT1 = MYCTLCODE(16),
+	enumSSDT2 = MYCTLCODE(17),
+	hookSysEnter = MYCTLCODE(18),// 3环程序将自身PID发送至0环,hook用到
 }MyCtlCode;
+
+// HOOK-SYSENTER相关
+//CHAR* PsGetProcessImageFileName(PEPROCESS*);
+ULONG_PTR    g_oldKiFastCallEntery;
+ULONG        g_uPid = 2840; // 需要保护的进程ID, 这个PID可以通过内核通讯来修改.
+void _declspec(naked) MyKiFastCallEntry()
+{
+	/**
+	  * 本函数是从用户层直接切换进来的.
+	  * 在本函数中,有以下信息可以使用:
+	  * 1. eax保存的是调用号
+	  * 2. edx保存着用户层的栈顶,且用户层的栈顶布局为:
+	  *        edx+0 [ 返回地址1 ]
+	  *        edx+4 [ 返回地址2 ]
+	  *        edx+8 [ 形   参1 ]
+	  *        edx+C [ 形   参2 ]
+	  * 3. 要HOOK的API是 OpenProcess,其调用号和参数信息为:
+	  *    调用号 - 0xBE
+	  *    函数参数 -
+	  *    NtOpenProcess(
+	  *  [edx+08h] PHANDLE            ProcessHandle,// 输出参数,进程句柄
+	  *  [edx+0Ch] ACCESS_MASK        DesiredAccess,// 打开的权限
+	  *  [edx+10h] POBJECT_ATTRIBUTES ObjectAttributes,// 对象属性,无用
+	  *  [edx+14h] PCLIENT_ID         ClientId         // 进程ID和线程ID的结构体
+	  *  最后一个参数的结构体原型为:
+	  *  typedef struct _CLIENT_ID
+	  *  {
+	  *        PVOID UniqueProcess;// 进程ID
+	  *     PVOID UniqueThread; // 线程ID(在这个函数中用不到)
+	  *  } CLIENT_ID, *PCLIENT_ID;
+	  *
+	  * HOOK 步骤:
+	  * 1. 检查调用号是不是0xBE(ZwOpenProcess)
+	  * 2. 检查进程ID是不是要保护的进程的ID
+	  * 3. 如果是,则将进程ID改为0,再调用原来的函数,这样一来,即使功能被执行,
+	  *    也无法打开进程, 或者将访问权限设置为0,同样也能让进程无法被打开.
+	  * 4. 如果不是,则调用原来的KiFastCallEntry函数
+	  */
+
+
+
+	_asm
+	{
+		;// 1. 检查调用号
+		cmp eax, 0xBE;
+		jne _DONE; // 调用号不是0xBE,执行第4步
+
+		;// 2. 检查进程ID是不是要保护的进程的ID
+		push eax; // 备份寄存器
+
+		;// 2. 获取参数(进程ID)
+		mov eax, [edx + 0x14];// eax保存的是PCLIENT_ID
+		mov eax, [eax];// eax保存的是PCLIENT_ID->UniqueProcess
+
+		;// 3. 判断是不是要保护的进程ID
+		cmp eax, [g_uPid];
+		pop eax;// 恢复寄存器
+		jne _DONE;// 不是要保护的进程就跳转
+
+		;// 3.1 是的话就该调用参数,让后续函数调用失败.
+		mov[edx + 0xC], 0; // 将访问权限设置为0
+
+	_DONE:
+		; // 4. 调用原来的KiFastCallEntry
+		jmp g_oldKiFastCallEntery;
+	}
+}
+void _declspec(naked) installSysenterHook()
+{
+	_asm
+	{
+		push edx;
+		push eax;
+		push ecx;
+
+		;// 备份原始函数
+		mov ecx, 0x176;//SYSENTER_EIP_MSR寄存器的编号.保存着KiFastCallEntry的地址
+		rdmsr; // // 指令使用ecx寄存器的值作为MSR寄存器组的编号,将这个编号的寄存器中的值读取到edx:eax
+		mov[g_oldKiFastCallEntery], eax;// 将地址保存到全局变量中.
+
+		;// 将新的函数设置进去.
+		mov eax, MyKiFastCallEntry;
+		xor edx, edx;
+		wrmsr; // 指令使用ecx寄存器的值作为MSR寄存器组的编号,将edx:eax写入到这个编号的寄存器中.
+		pop ecx;
+		pop eax;
+		pop edx;
+		ret;
+	}
+}
+void uninstallSysenterHook()
+{
+	_asm
+	{
+		push edx;
+		push eax;
+		push ecx;
+		;// 将新的函数设置进去.
+		mov eax, [g_oldKiFastCallEntery];
+		xor edx, edx;
+		mov ecx, 0x176;
+		wrmsr; // 指令使用ecx寄存器的值作为MSR寄存器组的编号,将edx:eax写入到这个编号的寄存器中.
+		pop ecx;
+		pop eax;
+		pop edx;
+	}
+}
+
+
+// 工具函数
+NTSTATUS FindFirstFile(const WCHAR* pszPath, HANDLE* phDir, FILE_BOTH_DIR_INFORMATION* pFileInfo, int nInfoSize)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+	// 1. 打开文件夹,得到文件夹的文件句柄
+	HANDLE hDir = NULL;
+	OBJECT_ATTRIBUTES oa = { 0 };
+	UNICODE_STRING path;
+	RtlInitUnicodeString(&path, pszPath);
+
+	InitializeObjectAttributes(
+		&oa,/*要初始化的对象属性结构体*/
+		&path,/*文件路径*/
+		OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,/*属性:路径不区分大小写,打开的句柄是内核句柄*/
+		NULL,
+		NULL);
+	IO_STATUS_BLOCK isb = { 0 };
+	status = ZwCreateFile(
+		&hDir,/*输出的文件句柄*/
+		GENERIC_READ,
+		&oa,/*对象属性,需要提前将文件夹路径初始化进去*/
+		&isb,
+		NULL,/*文件预分配大小*/
+		FILE_ATTRIBUTE_NORMAL,/*文件属性*/
+		FILE_SHARE_READ,/*共享方式*/
+		FILE_OPEN_IF,/*创建描述: 存在则打开*/
+		FILE_DIRECTORY_FILE,/*创建选项: 目录文件*/
+		NULL,
+		0);
+
+	if (!NT_SUCCESS(isb.Status)) {
+		return isb.Status;
+	}
+
+	// 2. 通过文件夹的文件句柄查询文件夹下的文件信息.
+	status = ZwQueryDirectoryFile(
+		hDir,
+		NULL,/*用于异步IO*/
+		NULL,
+		NULL,
+		&isb,
+		pFileInfo,/*保存文件信息的缓冲区*/
+		nInfoSize,/*缓冲区的字节数.*/
+		FileBothDirectoryInformation,/*要获取的信息的类型*/
+		TRUE,/*是否只返回一个文件信息*/
+		NULL,/*用于过滤文件的表达式: *.txt*/
+		TRUE/*是否重新开始扫描*/
+	);
+	if (!NT_SUCCESS(isb.Status)) {
+		return isb.Status;
+	}
+	// 传出文件句柄
+	*phDir = hDir;
+	return STATUS_SUCCESS;
+}
+NTSTATUS FindNextFile(HANDLE hDir, FILE_BOTH_DIR_INFORMATION* pFileInfo, int nInfoSize)
+{
+	IO_STATUS_BLOCK isb = { 0 };
+	ZwQueryDirectoryFile(
+		hDir,
+		NULL,/*用于异步IO*/
+		NULL,
+		NULL,
+		&isb,
+		pFileInfo,/*保存文件信息的缓冲区*/
+		nInfoSize,/*缓冲区的字节数.*/
+		FileBothDirectoryInformation,/*要获取的信息的类型*/
+		TRUE,/*是否只返回一个文件信息*/
+		NULL,/*用于过滤文件的表达式: *.txt*/
+		FALSE/*是否重新开始扫描*/
+	);
+	return isb.Status;
+}
+LONG GetFunticonAddr(PKSYSTEM_SERVICE_TABLE KeServiceDescriptorTable, LONG lgSsdtIndex)
+{
+	LONG lgSsdtAddr = 0;	//获取SSDT表的基址	
+	lgSsdtAddr = (LONG)KeServiceDescriptorTable->ServiceTableBase;
+	PLONG plgSsdtFunAddr = 0; 	//获取内核函数的地址指针	
+	plgSsdtFunAddr = (PLONG)(lgSsdtAddr + lgSsdtIndex * 4); 	//返回内核函数的地址	
+	return (*plgSsdtFunAddr);
+}
 
 // 自定义控制码的派遣函数
 NTSTATUS OnEnumDriver1(DEVICE_OBJECT *pDevice, IRP *pIrp)
@@ -707,7 +937,7 @@ NTSTATUS OnEnumIDT1(DEVICE_OBJECT *pDevice, IRP *pIrp)
 	// 4 数据传输-写入3环
 	//RtlCopyMemory(pBuff, &IDTEntryCount, sizeof(IDTEntryCount));//内存拷贝
 	pIrp->IoStatus.Status = status;// 完成状态
-	pIrp->IoStatus.Information =(ULONG)pIDTInfo-(ULONG)pBuff;// 总共传输字节数
+	pIrp->IoStatus.Information = (ULONG)pIDTInfo - (ULONG)pBuff;// 总共传输字节数
 	return status;
 }
 NTSTATUS OnEnumGDT1(DEVICE_OBJECT *pDevice, IRP *pIrp)
@@ -966,6 +1196,302 @@ NTSTATUS OnKillProcess(DEVICE_OBJECT *pDevice, IRP *pIrp)
 	pIrp->IoStatus.Information = 0;// 总共传输字节数
 	return status;
 }
+NTSTATUS OnEnumFile1(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 1 获取双向链表首地址
+	PDRIVER_OBJECT pDriver = pDevice->DriverObject;// 设备对象归属的驱动对象
+	PLDR_DATA_TABLE_ENTRY pLdr = pDriver->DriverSection;// 多条驱动信息构成的双向链表
+	PLDR_DATA_TABLE_ENTRY pBegin = pLdr;// 链表首地址
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 遍历文件
+	//KdBreakPoint();
+	ULONG fileCount = 0;
+	HANDLE hDir = NULL;
+	char buff[sizeof(FILE_BOTH_DIR_INFORMATION) + 266 * 2];
+	FILE_BOTH_DIR_INFORMATION* pFileInfo = (FILE_BOTH_DIR_INFORMATION*)buff;
+	status = FindFirstFile(_TEXT("\\??\\C:\\"), &hDir, pFileInfo, sizeof(buff));
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint(("查找第一个文件失败:%08X\n", status));
+		return status;
+	}
+	do
+	{
+		// 处理Filename字段,防止乱码
+		UNICODE_STRING uniName;
+		TCHAR name[1024] = { 0 };
+		RtlZeroMemory(name, 1024);
+		RtlCopyMemory(name, pFileInfo->FileName, pFileInfo->FileNameLength);// 输出内容
+		RtlInitUnicodeString(&uniName, name);
+		// 打印信息
+		KdPrint(("index:%d,文件名:%wZ,占用空间:%lld,属性值:%d,创建时间:%u, 修改时间:%llu\n", fileCount, &uniName, pFileInfo->AllocationSize.QuadPart, pFileInfo->FileAttributes, pFileInfo->CreationTime, pFileInfo->ChangeTime.QuadPart));
+		// 个数+1
+		fileCount++;
+	} while (STATUS_SUCCESS == FindNextFile(hDir, pFileInfo, sizeof(buff)));
+
+
+	// 4 数据传输-写入3环
+	RtlCopyMemory(pBuff, &fileCount, sizeof(fileCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = sizeof(fileCount);// 总共传输字节数
+	return status;
+}
+NTSTATUS OnEnumFile2(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 1 获取双向链表首地址
+	PDRIVER_OBJECT pDriver = pDevice->DriverObject;// 设备对象归属的驱动对象
+	PLDR_DATA_TABLE_ENTRY pLdr = pDriver->DriverSection;// 多条驱动信息构成的双向链表
+	PLDR_DATA_TABLE_ENTRY pBegin = pLdr;// 链表首地址
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 遍历文件
+	//KdBreakPoint();
+	PFILEINFO pFileInformation = (PFILEINFO)pBuff;
+	ULONG fileCount = 0;
+	HANDLE hDir = NULL;
+	char buff[sizeof(FILE_BOTH_DIR_INFORMATION) + 266 * 2];
+	FILE_BOTH_DIR_INFORMATION* pFileInfo = (FILE_BOTH_DIR_INFORMATION*)buff;
+	status = FindFirstFile(_TEXT("\\??\\C:\\"), &hDir, pFileInfo, sizeof(buff));
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint(("查找第一个文件失败:%08X\n", status));
+		return status;
+	}
+	do
+	{
+		// 处理Filename字段,防止乱码
+		UNICODE_STRING uniName;
+		TCHAR name[1024] = { 0 };
+		RtlZeroMemory(name, 1024);
+		RtlCopyMemory(name, pFileInfo->FileName, pFileInfo->FileNameLength);// 输出内容
+		RtlInitUnicodeString(&uniName, name);
+
+		KdPrint(("index:%d,文件名:%wZ,占用空间:%lld,属性值:%d,创建时间:%llu, 修改时间:%llu\n", fileCount, &uniName, pFileInfo->AllocationSize.QuadPart, pFileInfo->FileAttributes, pFileInfo->CreationTime.QuadPart, pFileInfo->ChangeTime.QuadPart));
+		fileCount++;
+
+		_tcscpy_s(pFileInformation->fileName, sizeof(pFileInformation->fileName), uniName.Buffer);
+		pFileInformation->attribute = pFileInfo->FileAttributes;
+		pFileInformation->size = pFileInfo->AllocationSize.QuadPart;
+		pFileInformation->createTime = pFileInfo->CreationTime.QuadPart;
+		pFileInformation->changeTime = pFileInfo->ChangeTime.QuadPart;
+
+		pFileInformation++;// 指针后移
+
+
+	} while (STATUS_SUCCESS == FindNextFile(hDir, pFileInfo, sizeof(buff)));
+
+
+	// 4 数据传输-写入3环
+	//RtlCopyMemory(pBuff, &fileCount, sizeof(fileCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = (ULONG)pFileInformation - (ULONG)pBuff;// 总共传输字节数
+	return status;
+}
+NTSTATUS OnDeleteFile(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 1 获取双向链表首地址
+	PDRIVER_OBJECT pDriver = pDevice->DriverObject;// 设备对象归属的驱动对象
+	PLDR_DATA_TABLE_ENTRY pLdr = pDriver->DriverSection;// 多条驱动信息构成的双向链表
+	PLDR_DATA_TABLE_ENTRY pBegin = pLdr;// 链表首地址
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 遍历文件
+	KdBreakPoint();
+	int fileIndex = *(int*)pBuff;// 待删除文件索引
+	ULONG fileCount = 0;
+	HANDLE hDir = NULL;
+	char buff[sizeof(FILE_BOTH_DIR_INFORMATION) + 266 * 2];
+	FILE_BOTH_DIR_INFORMATION* pFileInfo = (FILE_BOTH_DIR_INFORMATION*)buff;
+	status = FindFirstFile(_TEXT("\\??\\C:\\"), &hDir, pFileInfo, sizeof(buff));
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint(("查找第一个文件失败:%08X\n", status));
+		return status;
+	}
+	do
+	{
+
+		// 找到目标驱动
+		if (fileIndex == fileCount)
+		{
+			// 处理Filename字段,防止乱码
+			const UNICODE_STRING uniName;
+			TCHAR name[1024] = { 0 };
+			RtlZeroMemory(name, 1024);
+			RtlCopyMemory(name, pFileInfo->FileName, pFileInfo->FileNameLength);// 输出内容
+			RtlInitUnicodeString(&uniName, name);
+			//RtlInitEmptyUnicodeString(&uniName, name,1024);
+			// 打印信息
+			KdPrint(("index:%d,文件名:%wZ\n", fileCount, &uniName));
+
+
+			// 开始删除文件
+			UNICODE_STRING path;
+			//RtlInitEmptyUnicodeString(&path, _TEXT("\\??\\C:\\"), 2048);
+			RtlInitUnicodeString(&path, _TEXT("\\??\\C:\\新建文本文档.txt"));
+			//RtlInitUnicodeString(&path, _TEXT("\\??\\C:\\"));
+			//RtlAppendUnicodeStringToString(&path, &uniName);
+			KdPrint(("%wZ\n",&path));
+			// 1. 初始化OBJECT_ATTRIBUTES的内容
+			OBJECT_ATTRIBUTES objAttrib = { 0 };
+			ULONG  ulAttributes = OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE;
+			InitializeObjectAttributes(&objAttrib,&path,ulAttributes,NULL,NULL);
+			// 2. 删除指定文件/文件夹
+			ZwDeleteFile(&objAttrib);
+
+
+			break;
+		}
+		// 个数+1
+		fileCount++;
+	} while (STATUS_SUCCESS == FindNextFile(hDir, pFileInfo, sizeof(buff)));
+
+
+	// 4 数据传输-写入3环
+	//RtlCopyMemory(pBuff, &fileCount, sizeof(fileCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = 0;// 总共传输字节数
+	return status;
+}
+NTSTATUS OnEnumSSDT1(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 3 获取驱动个数
+	//KdBreakPoint();
+	ULONG SSDTCount = 0;
+
+	// 获取系统服务描述符表
+	PETHREAD* pCurThread = PsGetCurrentThread();
+	KSERVICE_TABLE_DESCRIPTOR * pServiceTable = (KSERVICE_TABLE_DESCRIPTOR*)
+		(*(ULONG*)((ULONG_PTR)pCurThread + 0xBC));
+	SSDTCount = pServiceTable->ntoskrnl.NumberOfService;// SSDT中函数个数
+	// 4 数据传输-写入3环
+	RtlCopyMemory(pBuff, &SSDTCount, sizeof(SSDTCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = sizeof(SSDTCount);// 总共传输字节数
+	return status;
+}
+NTSTATUS OnEnumSSDT2(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 3 获取驱动个数
+	ULONG SSDTCount = 0;
+	PSSDTINFO pSSDTInfo = (PSSDTINFO)pBuff;
+	// 获取系统服务描述符表
+	PETHREAD* pCurThread = PsGetCurrentThread();
+	KSERVICE_TABLE_DESCRIPTOR * pServiceTable = (KSERVICE_TABLE_DESCRIPTOR*)
+		(*(ULONG*)((ULONG_PTR)pCurThread + 0xBC));
+	SSDTCount = pServiceTable->ntoskrnl.NumberOfService;// SSDT中函数个数
+	for (int i = 0; i < SSDTCount; i++)
+	{
+		pSSDTInfo->funcAddr = GetFunticonAddr(&pServiceTable->ntoskrnl, i);
+
+		pSSDTInfo++;
+	}
+
+	// 4 数据传输-写入3环
+	//RtlCopyMemory(pBuff, &SSDTCount, sizeof(SSDTCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = (ULONG)pSSDTInfo-(ULONG)pBuff;// 总共传输字节数
+	return status;
+}
+NTSTATUS OnHookSysEnter(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+	// 3 安装hook
+	KdBreakPoint();
+	g_uPid = *(int*)pBuff;//获取PID
+	installSysenterHook();
+	KdPrint(("%d\n", g_uPid));
+	// 4 数据传输-写入3环
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = 0;// 总共传输字节数
+	return status;
+}
 
 // 绑定控制码与派遣函数
 typedef struct _DeivecIoCtrlhandler
@@ -988,6 +1514,13 @@ DeivecIoCtrlhandler g_handler[] =
 	 {HideDriver,OnHideDriver},
 	 {HideProcess,OnHideProcess},
 	 {KillProcess,OnKillProcess},
+	 {enumFile1,OnEnumFile1},
+	 {enumFile2,OnEnumFile2},
+	 {deleteFile,OnDeleteFile},
+	 {enumSSDT1,OnEnumSSDT1},
+	 {enumSSDT2,OnEnumSSDT2},
+	 {hookSysEnter,OnHookSysEnter},
+
 };
 
 // 全局变量
@@ -1004,6 +1537,8 @@ void OnUnload(DRIVER_OBJECT* object)
 	// 删除符号链接
 	UNICODE_STRING symName = RTL_CONSTANT_STRING(NAME_SYMBOL);
 	IoDeleteSymbolicLink(&symName);
+	// 卸载HOOK
+	uninstallSysenterHook();
 }
 // 派遣函数
 NTSTATUS OnCreate(DEVICE_OBJECT *pDevice, IRP *pIrp)
@@ -1197,11 +1732,8 @@ NTSTATUS DriverEntry(DRIVER_OBJECT* pDriverObj, UNICODE_STRING* path)
 	pDriverObj->MajorFunction[IRP_MJ_CLOSE] = &OnClose;
 	pDriverObj->MajorFunction[IRP_MJ_DEVICE_CONTROL] = &OnDeviceIoControl;
 
-
-	//pLdr = (LDR_DATA_TABLE_ENTRY*)pDriverObj->DriverSection;
-	//pBegin = pLdr;
+	// 安装HOOK
+	//installSysenterHook();
 
 	return status;
 }
-
-

@@ -193,6 +193,7 @@
     <ClInclude Include="CDlgIDT.h" />
     <ClInclude Include="CDlgModule.h" />
     <ClInclude Include="CDlgProcess.h" />
+    <ClInclude Include="CDlgSSDT.h" />
     <ClInclude Include="CDlgThread.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="stdafx.h" />
@@ -208,6 +209,7 @@
     <ClCompile Include="CDlgIDT.cpp" />
     <ClCompile Include="CDlgModule.cpp" />
     <ClCompile Include="CDlgProcess.cpp" />
+    <ClCompile Include="CDlgSSDT.cpp" />
     <ClCompile Include="CDlgThread.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>

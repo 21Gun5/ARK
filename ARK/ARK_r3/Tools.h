@@ -21,6 +21,12 @@ typedef enum MyCtlCode
 	HideDriver = MYCTLCODE(10),
 	HideProcess = MYCTLCODE(11),
 	KillProcess = MYCTLCODE(12),
+	enumFile1 = MYCTLCODE(13),
+	enumFile2 = MYCTLCODE(14),
+	deleteFile = MYCTLCODE(15),
+	enumSSDT1 = MYCTLCODE(16),
+	enumSSDT2 = MYCTLCODE(17),
+	hookSysEnter = MYCTLCODE(18),
 };
 
 extern HANDLE g_hDev;
@@ -97,6 +103,20 @@ typedef struct _GDTINFO
 	UINT64 D_B : 1;
 	UINT64 G : 1;
 }GDTINFO, *PGDTINFO;
+
+typedef struct _FILEINFO
+{
+	TCHAR fileName[260];
+	ULONGLONG size;
+	DWORD attribute;
+	LONGLONG createTime;
+	LONGLONG changeTime;
+}FILEINFO, *PFILEINFO;
+typedef struct _SSDTINFO
+{
+	ULONG funcAddr;
+	//ULONG paramCount;
+}SSDTINFO, *PSSDTINFO;
 
 // ¶ÔDeviceIoControlµÄ·â×°.
 //void ark_readprocmemroy(HANDLE hDev, int pid, char* dest, int size);

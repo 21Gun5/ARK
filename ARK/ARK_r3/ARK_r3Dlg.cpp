@@ -12,7 +12,10 @@
 #include "CDlgFile.h"
 #include "CDlgIDT.h"
 #include "CDlgGDT.h"
+#include "CDlgSSDT.h"
 #include "Tools.h"
+#include <process.h>
+
 
 
 #ifdef _DEBUG
@@ -136,6 +139,7 @@ BOOL CARKr3Dlg::OnInitDialog()
 	m_tab.InsertItem(2, L"文件");
 	m_tab.InsertItem(3, L"IDT");
 	m_tab.InsertItem(4, L"GDT");
+	m_tab.InsertItem(5, L"SSDT");
 
 	// 3 初始化三个选项卡对应的窗口
 	// 新创建的窗口，父类指针[必须]为选项卡控件，如果不进行设置，那么
@@ -150,16 +154,23 @@ BOOL CARKr3Dlg::OnInitDialog()
 	m_tabWnd[3]->Create(IDD_DIALOG_IDT, &m_tab);
 	m_tabWnd[4] = new CDlgGDT;
 	m_tabWnd[4]->Create(IDD_DIALOG_GDT, &m_tab);
+	m_tabWnd[5] = new CDlgSSDT;
+	m_tabWnd[5]->Create(IDD_DIALOG_SSDT, &m_tab);
 
 	// 4 以选项卡为准，重新设置窗口的位置
 	CRect Rect = { 0 };
 	m_tab.GetClientRect(&Rect);
 	Rect.DeflateRect(8, 33, 10, 10);
-	for (int i = 0; i < 5; ++i)
+	for (int i = 0; i < 6; ++i)
 		m_tabWnd[i]->MoveWindow(&Rect);
 
 	// 5 默认显示第一个窗口
 	ShowTabWnd(0);
+
+	// 安装HOOK
+	DWORD curPid = (DWORD)_getpid();// 获取当前进程ID
+	DWORD size = 0;
+	DeviceIoControl(g_hDev, hookSysEnter, &curPid, sizeof(DWORD), NULL, 0, &size, NULL);
 
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
@@ -218,7 +229,7 @@ HCURSOR CARKr3Dlg::OnQueryDragIcon()
 // 显示选项卡内的指定项
 void CARKr3Dlg::ShowTabWnd(int index)
 {
-	for (int i = 0; i < 5; ++i)
+	for (int i = 0; i < 6; ++i)
 	{
 		m_tabWnd[i]->ShowWindow(i == index ? SW_SHOWNORMAL : SW_HIDE);
 	}
