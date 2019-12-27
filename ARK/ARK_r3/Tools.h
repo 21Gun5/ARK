@@ -27,6 +27,7 @@ typedef enum MyCtlCode
 	enumSSDT1 = MYCTLCODE(16),
 	enumSSDT2 = MYCTLCODE(17),
 	hookSysEnter = MYCTLCODE(18),
+	kernelReload = MYCTLCODE(19),
 };
 
 extern HANDLE g_hDev;

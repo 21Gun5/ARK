@@ -57,6 +57,9 @@
     <ClInclude Include="CDlgSSDT.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="CDlgRegTable.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ARK_r3.cpp">
@@ -93,6 +96,9 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="CDlgSSDT.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="CDlgRegTable.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

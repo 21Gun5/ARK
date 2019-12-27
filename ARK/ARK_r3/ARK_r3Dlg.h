@@ -34,7 +34,7 @@ protected:
 public:
 //	afx_msg void OnBnClickedButtonDriver();
 	//CTabCtrl m_tab;
-	CDialogEx* m_tabWnd[6] = { 0 };
+	CDialogEx* m_tabWnd[7] = { 0 };
 
 	CTabCtrl m_tab;
 	void ShowTabWnd(int index);
