@@ -18,11 +18,11 @@
 #define IDR_MENU2                       147
 #define IDR_MENU3                       148
 #define IDD_DIALOG_SSDT                 149
-#define IDD_DIALOG1                     151
 #define IDD_DIALOG_REGTABLE             151
 #define IDC_BUTTON_DRIVER               1000
 #define IDC_TAB1                        1001
 #define IDC_LIST1                       1003
+#define IDC_TREE1                       1005
 #define ID_32771                        32771
 #define ID_32772                        32772
 #define ID_32773                        32773
@@ -48,7 +48,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        153
 #define _APS_NEXT_COMMAND_VALUE         32789
-#define _APS_NEXT_CONTROL_VALUE         1005
+#define _APS_NEXT_CONTROL_VALUE         1006
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

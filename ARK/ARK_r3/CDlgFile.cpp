@@ -59,6 +59,7 @@ BOOL CDlgFile::OnInitDialog()
 	m_list.InsertColumn(4, _TEXT("创建时间"), 0, 60);
 	m_list.InsertColumn(5, _TEXT("修改时间"), 0, 60);
 
+	OnRenew();
 
 	return TRUE;  // return TRUE unless you set the focus to a control
 				  // 异常: OCX 属性页应返回 FALSE
@@ -93,10 +94,6 @@ void CDlgFile::OnRenew()
 	//tmp.Format(_TEXT("%d"), count);
 	//MessageBox(tmp);
 
-
-
-
-
 	// 第二次,获取所有数据
 	PFILEINFO pFileInfo = new FILEINFO[count * sizeof(FILEINFO)]{ 0 };// 申请堆空间,并初始化为0
 	DeviceIoControl(g_hDev, enumFile2, NULL, 0, pFileInfo, count * sizeof(FILEINFO), &size, NULL);
@@ -121,30 +118,21 @@ void CDlgFile::OnRenew()
 		tmp.Format(_TEXT("%d"), pFileInfo->attribute);
 		m_list.SetItemText(index, 3, tmp);
 
-		tmp.Format(_TEXT("%llu"), pFileInfo->createTime);
+		FILETIME LocalTime = { 0 };//本地时间
+		SYSTEMTIME SysTime;//系统时间
+		LocalTime.dwLowDateTime = pFileInfo->createTime.LowPart;
+		LocalTime.dwHighDateTime = pFileInfo->createTime.HighPart;
+		FileTimeToSystemTime(&LocalTime, &SysTime);
+		tmp.Format(_TEXT("%04d-%02d-%02d  %02d:%02d:%02d\n"), SysTime.wYear, SysTime.wMonth, SysTime.wDay, SysTime.wHour, SysTime.wMinute, SysTime.wSecond);
 		m_list.SetItemText(index, 4, tmp);
-		tmp.Format(_TEXT("%llu"), pFileInfo->changeTime);
+
+		LocalTime.dwLowDateTime = pFileInfo->changeTime.LowPart;
+		LocalTime.dwHighDateTime = pFileInfo->changeTime.HighPart;
+		FileTimeToSystemTime(&LocalTime, &SysTime);
+		tmp.Format(_TEXT("%04d-%02d-%02d  %02d:%02d:%02d\n"), SysTime.wYear, SysTime.wMonth, SysTime.wDay, SysTime.wHour, SysTime.wMinute, SysTime.wSecond);
 		m_list.SetItemText(index, 5, tmp);
 
-
-		//time_t t1 = pFileInfo->createTime;
-		//struct tm *p1=NULL;
-		//gmtime_s(p1,&t1);
-		//char s1[100];
-		//strftime(s1, sizeof(s1), "%04Y-%02m-%02d %H:%M:%S", p1);
-
-		//time_t t2 = pFileInfo->changeTime;
-		//struct tm *p2=NULL;
-		//gmtime_s(p2,&t2);
-		//char s2[100];
-		//strftime(s2, sizeof(s2), "%04Y-%02m-%02d %H:%M:%S", p2);
-
-		//tmp.Format(_TEXT("%s"), s1);
-		//m_list.SetItemText(index, 4, tmp);
-		//tmp.Format(_TEXT("%s"), s2);
-		//m_list.SetItemText(index, 5, tmp);
-
-
+		
 
 		// 下一行 下一驱动
 		pFileInfo++;
@@ -160,6 +148,9 @@ void CDlgFile::OnDeletefile()
 
 	// 获取被点击的驱动（通过光标选择序号，序号从1开始，故-1
 	DWORD index = (int)m_list.GetFirstSelectedItemPosition() - 1;
+	//PFILEINFO pFileInfo = new FILEINFO[sizeof(FILEINFO)]{ 0 };// 申请堆空间,并初始化为0
+	//filename = m_list.GetItemText(index, 1);
 	DWORD size = 0;
 	DeviceIoControl(g_hDev, deleteFile, &index, sizeof(DWORD), NULL, 0, &size, NULL);
+
 }

@@ -172,7 +172,7 @@ BOOL CARKr3Dlg::OnInitDialog()
 	ShowTabWnd(0);
 
 	
-	// 6 内核重载
+	// 6 内核重载(注意:每次测试时,先停止-卸载驱动后,再打开3环程序;不可驱动没卸载时,就关闭-重新打开3环程序,会出问题; 即0环安装启动-3环打开-3环关闭-0环停止卸载,为一个周期
 	DWORD size = 0;
 	DeviceIoControl(g_hDev, kernelReload, NULL, 0, NULL, 0, &size, NULL);
 	// 7 安装HOOK

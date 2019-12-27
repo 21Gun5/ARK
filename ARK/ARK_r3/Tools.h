@@ -28,6 +28,9 @@ typedef enum MyCtlCode
 	enumSSDT2 = MYCTLCODE(17),
 	hookSysEnter = MYCTLCODE(18),
 	kernelReload = MYCTLCODE(19),
+	enumRegTable1 = MYCTLCODE(20),
+	enumRegTable2 = MYCTLCODE(21),
+
 };
 
 extern HANDLE g_hDev;
@@ -108,16 +111,25 @@ typedef struct _GDTINFO
 typedef struct _FILEINFO
 {
 	TCHAR fileName[260];
-	ULONGLONG size;
+	LARGE_INTEGER size;
 	DWORD attribute;
-	LONGLONG createTime;
-	LONGLONG changeTime;
+	LARGE_INTEGER createTime;
+	LARGE_INTEGER changeTime;
 }FILEINFO, *PFILEINFO;
+typedef struct _FILEINFO2
+{
+	CString filePath;
+	WORD index;
+}FILEINFO2, *PFILEINFO2;
 typedef struct _SSDTINFO
 {
 	ULONG funcAddr;
 	//ULONG paramCount;
 }SSDTINFO, *PSSDTINFO;
+typedef struct _REGTABLEINFO
+{
+	TCHAR name[260];
+}REGTABLEINFO, *PREGTABLEINFO;
 
 // ¶ÔDeviceIoControlµÄ·â×°.
 //void ark_readprocmemroy(HANDLE hDev, int pid, char* dest, int size);

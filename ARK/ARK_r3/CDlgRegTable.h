@@ -20,4 +20,7 @@ protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV 支持
 
 	DECLARE_MESSAGE_MAP()
+public:
+	CTreeCtrl m_tree;
+	virtual BOOL OnInitDialog();
 };

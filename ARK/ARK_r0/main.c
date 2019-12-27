@@ -6,7 +6,6 @@
 #include <ntimage.h>
 #include "kernelFunction.h"
 
-
 // 设备\符号链接名
 #define NAME_DEVICE L"\\Device\\deviceARK"
 #define NAME_SYMBOL L"\\DosDevices\\deviceARK"
@@ -109,16 +108,21 @@ typedef struct _GDTINFO
 typedef struct _FILEINFO
 {
 	TCHAR fileName[260];
-	ULONGLONG size;
+	LARGE_INTEGER size;
 	ULONG attribute;
-	ULONGLONG createTime;
-	ULONGLONG changeTime;
+	LARGE_INTEGER createTime;
+	LARGE_INTEGER changeTime;
 }FILEINFO, *PFILEINFO;
+
 typedef struct _SSDTINFO
 {
 	ULONG funcAddr;
 	//ULONG paramCount;
 }SSDTINFO, *PSSDTINFO;
+typedef struct _REGTABLEINFO
+{
+	TCHAR name[260];
+}REGTABLEINFO, *PREGTABLEINFO;
 
 typedef struct _IDT_INFO
 {
@@ -196,6 +200,8 @@ typedef enum _MyCtlCode
 	enumSSDT2 = MYCTLCODE(17),
 	hookSysEnter = MYCTLCODE(18),
 	kernelReload = MYCTLCODE(19),
+	enumRegTable1 = MYCTLCODE(20),
+	enumRegTable2 = MYCTLCODE(21),
 }MyCtlCode;
 
 // HOOK-SYSENTER相关
@@ -1595,7 +1601,7 @@ NTSTATUS OnEnumFile1(DEVICE_OBJECT *pDevice, IRP *pIrp)
 		RtlCopyMemory(name, pFileInfo->FileName, pFileInfo->FileNameLength);// 输出内容
 		RtlInitUnicodeString(&uniName, name);
 		// 打印信息
-		KdPrint(("index:%d,文件名:%wZ,占用空间:%lld,属性值:%d,创建时间:%u, 修改时间:%llu\n", fileCount, &uniName, pFileInfo->AllocationSize.QuadPart, pFileInfo->FileAttributes, pFileInfo->CreationTime, pFileInfo->ChangeTime.QuadPart));
+		KdPrint(("index:%d,文件名:%wZ,占用空间:%lld,属性值:%d,创建时间:%llu, 修改时间:%llu\n", fileCount, &uniName, pFileInfo->AllocationSize.QuadPart, pFileInfo->FileAttributes, pFileInfo->CreationTime.QuadPart, pFileInfo->ChangeTime.QuadPart));
 		// 个数+1
 		fileCount++;
 	} while (STATUS_SUCCESS == FindNextFile(hDir, pFileInfo, sizeof(buff)));
@@ -1651,14 +1657,14 @@ NTSTATUS OnEnumFile2(DEVICE_OBJECT *pDevice, IRP *pIrp)
 		RtlCopyMemory(name, pFileInfo->FileName, pFileInfo->FileNameLength);// 输出内容
 		RtlInitUnicodeString(&uniName, name);
 
-		KdPrint(("index:%d,文件名:%wZ,占用空间:%lld,属性值:%d,创建时间:%llu, 修改时间:%llu\n", fileCount, &uniName, pFileInfo->AllocationSize.QuadPart, pFileInfo->FileAttributes, pFileInfo->CreationTime.QuadPart, pFileInfo->ChangeTime.QuadPart));
+		//KdPrint(("index:%d,文件名:%wZ,占用空间:%lld,属性值:%d,创建时间:%llu, 修改时间:%llu\n", fileCount, &uniName, pFileInfo->AllocationSize.QuadPart, pFileInfo->FileAttributes, pFileInfo->CreationTime.QuadPart, pFileInfo->ChangeTime.QuadPart));
 		fileCount++;
 
 		_tcscpy_s(pFileInformation->fileName, sizeof(pFileInformation->fileName), uniName.Buffer);
 		pFileInformation->attribute = pFileInfo->FileAttributes;
-		pFileInformation->size = pFileInfo->AllocationSize.QuadPart;
-		pFileInformation->createTime = pFileInfo->CreationTime.QuadPart;
-		pFileInformation->changeTime = pFileInfo->ChangeTime.QuadPart;
+		pFileInformation->size = pFileInfo->AllocationSize;
+		pFileInformation->createTime = pFileInfo->CreationTime;
+		pFileInformation->changeTime = pFileInfo->ChangeTime;
 
 		pFileInformation++;// 指针后移
 
@@ -1695,7 +1701,7 @@ NTSTATUS OnDeleteFile(DEVICE_OBJECT *pDevice, IRP *pIrp)
 #endif
 
 	// 遍历文件
-	KdBreakPoint();
+	//KdBreakPoint();
 	int fileIndex = *(int*)pBuff;// 待删除文件索引
 	ULONG fileCount = 0;
 	HANDLE hDir = NULL;
@@ -1723,9 +1729,9 @@ NTSTATUS OnDeleteFile(DEVICE_OBJECT *pDevice, IRP *pIrp)
 			// 打印信息
 			KdPrint(("index:%d,文件名:%wZ\n", fileCount, &uniName));
 
-
 			// 开始删除文件
 			UNICODE_STRING path;
+			//RtlInitUnicodeString(&path, _TEXT("\\??\\C:\\新建文本文档.txt"));
 			//RtlInitEmptyUnicodeString(&path, _TEXT("\\??\\C:\\"), 2048);
 			RtlInitUnicodeString(&path, _TEXT("\\??\\C:\\新建文本文档.txt"));
 			//RtlInitUnicodeString(&path, _TEXT("\\??\\C:\\"));
@@ -1902,6 +1908,236 @@ NTSTATUS OnKernelReload(DEVICE_OBJECT *pDevice, IRP *pIrp)
 	pIrp->IoStatus.Information = 0;// 总共传输字节数
 	return status;
 }
+NTSTATUS OnEnumRegTable1(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 获取子项个数
+	//KdBreakPoint();
+	int regRootIndex = *(int*)pBuff;// 当前驱动
+	ULONG regSubCount = 0;
+	UNICODE_STRING Register;
+	HANDLE hRegister;
+	switch (regRootIndex)
+	{
+	case 0://_TEXT("\\Registry\\Machine\\Software\\Microsoft\\.NETFramework")
+		RtlInitUnicodeString(&Register, _TEXT("\\Registry\\A"));
+		break;
+	case 1:
+		RtlInitUnicodeString(&Register, _TEXT("\\Registry\\Machine"));
+		break;
+	case 2:
+		RtlInitUnicodeString(&Register, _TEXT("\\Registry\\User"));
+		break;
+	default:
+		break;
+	}
+	//RtlInitUnicodeString(&Register, _TEXT("\\Registry"));
+	OBJECT_ATTRIBUTES object;
+	InitializeObjectAttributes(&object,
+		&Register,
+		OBJ_CASE_INSENSITIVE,
+		NULL,
+		NULL);
+	NTSTATUS nt = ZwOpenKey(&hRegister,
+		KEY_ALL_ACCESS,
+		&object);
+	if (NT_SUCCESS(nt))
+	{
+		KdPrint(("打开成功！\n"));
+	}
+	else
+	{
+		KdPrint(("打开失败 可惜！\n"));
+		//driver->DriverUnload = DriverUnload;
+		return STATUS_SUCCESS;
+	}
+	ULONG size;
+	ZwQueryKey(hRegister,
+		KeyFullInformation,
+		NULL,
+		0,
+		&size);
+	PKEY_FULL_INFORMATION pfi =
+		(PKEY_FULL_INFORMATION)ExAllocatePool(PagedPool, size);
+	ZwQueryKey(hRegister,
+		KeyFullInformation,
+		pfi,
+		size,
+		&size);
+
+	for (ULONG i = 0; i < pfi->SubKeys; i++)
+	{
+		ZwEnumerateKey(hRegister,
+			i,
+			KeyBasicInformation,
+			NULL,
+			0,
+			&size);
+		PKEY_BASIC_INFORMATION pbi =
+			(PKEY_BASIC_INFORMATION)ExAllocatePool(PagedPool, size);
+		ZwEnumerateKey(hRegister,
+			i,
+			KeyBasicInformation,
+			pbi,
+			size,
+			&size);
+		UNICODE_STRING unikeyName;
+		unikeyName.Length =
+			unikeyName.MaximumLength =
+			(USHORT)pbi->NameLength;
+		unikeyName.Buffer = pbi->Name;
+		KdPrint(("第 %d 的名字是 %wZ\n", i, &unikeyName));
+		ExFreePool(pbi);
+	}
+
+
+	regSubCount = pfi->SubKeys;
+
+	ExFreePool(pfi);
+	ZwClose(hRegister);
+
+	// 4 数据传输-写入3环
+	RtlCopyMemory(pBuff, &regSubCount, sizeof(regSubCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = sizeof(regSubCount);// 总共传输字节数
+	return status;
+}
+NTSTATUS OnEnumRegTable2(DEVICE_OBJECT *pDevice, IRP *pIrp)
+{
+	NTSTATUS status = STATUS_SUCCESS;// 返回状态
+
+	// 2 获取IO缓存区(二者共用
+	TCHAR* pBuff = NULL;
+	if (pIrp->MdlAddress != NULL)
+		pBuff = MmGetSystemAddressForMdlSafe(pIrp->MdlAddress, 0);
+	else if (pIrp->AssociatedIrp.SystemBuffer != NULL)
+		pBuff = pIrp->AssociatedIrp.SystemBuffer;
+	else if (pIrp->UserBuffer != NULL)
+		pBuff = pIrp->UserBuffer;
+	else
+		pBuff = NULL;
+	// 若调试状态则下断
+#ifdef _DEBUG
+	KdBreakPoint();
+#endif
+
+	// 获取子项个数
+	//PREGTABLEINFO pRegTableInfo = (PREGTABLEINFO)pBuff;
+	//KdBreakPoint();
+	ULONG regSubCount = 0;
+	UNICODE_STRING Register;
+	HANDLE hRegister;
+
+	int regRootIndex = *(int*)pBuff;// 先做输入
+
+	switch (regRootIndex)
+	{
+	case 0://_TEXT("\\Registry\\Machine\\Software\\Microsoft\\.NETFramework")
+		RtlInitUnicodeString(&Register, _TEXT("\\Registry\\A"));
+		break;
+	case 1:
+		RtlInitUnicodeString(&Register, _TEXT("\\Registry\\Machine"));
+		break;
+	case 2:
+		RtlInitUnicodeString(&Register, _TEXT("\\Registry\\User"));
+		break;
+	default:
+		break;
+	}
+	//RtlInitUnicodeString(&Register, _TEXT("\\Registry"));
+	PREGTABLEINFO pRegTableInfo = (PREGTABLEINFO)pBuff;//先作输入,再做输出
+
+
+	OBJECT_ATTRIBUTES object;
+	InitializeObjectAttributes(&object,
+		&Register,
+		OBJ_CASE_INSENSITIVE,
+		NULL,
+		NULL);
+	NTSTATUS nt = ZwOpenKey(&hRegister,
+		KEY_ALL_ACCESS,
+		&object);
+	if (NT_SUCCESS(nt))
+	{
+		KdPrint(("打开成功！\n"));
+	}
+	else
+	{
+		KdPrint(("打开失败 可惜！\n"));
+		//driver->DriverUnload = DriverUnload;
+		return STATUS_SUCCESS;
+	}
+	ULONG size;
+	ZwQueryKey(hRegister,
+		KeyFullInformation,
+		NULL,
+		0,
+		&size);
+	PKEY_FULL_INFORMATION pfi =
+		(PKEY_FULL_INFORMATION)ExAllocatePool(PagedPool, size);
+	ZwQueryKey(hRegister,
+		KeyFullInformation,
+		pfi,
+		size,
+		&size);
+
+	for (ULONG i = 0; i < pfi->SubKeys; i++)
+	{
+		ZwEnumerateKey(hRegister,
+			i,
+			KeyBasicInformation,
+			NULL,
+			0,
+			&size);
+		PKEY_BASIC_INFORMATION pbi =
+			(PKEY_BASIC_INFORMATION)ExAllocatePool(PagedPool, size);
+		ZwEnumerateKey(hRegister,
+			i,
+			KeyBasicInformation,
+			pbi,
+			size,
+			&size);
+		UNICODE_STRING unikeyName;
+		unikeyName.Length =
+			unikeyName.MaximumLength =
+			(USHORT)pbi->NameLength;
+		unikeyName.Buffer = pbi->Name;
+		KdPrint(("第 %d 的名字是 %wZ\n", i, &unikeyName));
+
+		_tcscpy_s(pRegTableInfo->name, sizeof(pRegTableInfo->name), unikeyName.Buffer);
+		pRegTableInfo++;// 指针后移
+
+
+		ExFreePool(pbi);
+	}
+
+	regSubCount = pfi->SubKeys;
+
+	ExFreePool(pfi);
+	ZwClose(hRegister);
+
+	// 4 数据传输-写入3环
+	//RtlCopyMemory(pBuff, &regSubCount, sizeof(regSubCount));//内存拷贝
+	pIrp->IoStatus.Status = status;// 完成状态
+	pIrp->IoStatus.Information = (ULONG)pRegTableInfo - (ULONG)pBuff;// 尾地址-首地址=传输大小
+	return status;
+}
 
 // 绑定控制码与派遣函数
 typedef struct _DeivecIoCtrlhandler
@@ -1931,6 +2167,9 @@ DeivecIoCtrlhandler g_handler[] =
 	 {enumSSDT2,OnEnumSSDT2},
 	 {hookSysEnter,OnHookSysEnter},
 	 {kernelReload,OnKernelReload},
+	 {enumRegTable1,OnEnumRegTable1},
+	 {enumRegTable2,OnEnumRegTable2},
+
 
 };
 
